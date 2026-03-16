@@ -49,53 +49,14 @@
       setLoading(true, "Loading dashboard...");
       iframe.src = payload.url;
       iframe.hidden = false;
-
-      await waitForFrameLoad(iframe, 90000);
       setLoading(false);
     } catch (error) {
-      if (error?.code === "IFRAME_LOAD_TIMEOUT") {
-        // Some Looker dashboards take longer to complete the iframe load event.
-        // Avoid blocking the visible dashboard with an error banner.
-        setLoading(false);
-        return;
-      }
-
       showError(
         error.message ||
           "Unable to load the dashboard right now. Please try again."
       );
       setLoading(false);
     }
-  }
-
-  function waitForFrameLoad(frame, timeoutMs) {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        cleanup();
-        const timeoutError = new Error("Timed out while loading the dashboard.");
-        timeoutError.code = "IFRAME_LOAD_TIMEOUT";
-        reject(timeoutError);
-      }, timeoutMs);
-
-      function onLoad() {
-        cleanup();
-        resolve();
-      }
-
-      function onError() {
-        cleanup();
-        reject(new Error("The dashboard iframe failed to load."));
-      }
-
-      function cleanup() {
-        clearTimeout(timeout);
-        frame.removeEventListener("load", onLoad);
-        frame.removeEventListener("error", onError);
-      }
-
-      frame.addEventListener("load", onLoad, { once: true });
-      frame.addEventListener("error", onError, { once: true });
-    });
   }
 
   function setLoading(isLoading, message) {
