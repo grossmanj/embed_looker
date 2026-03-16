@@ -1,10 +1,13 @@
 (() => {
+  const DEFAULT_DASHBOARD_ID = "1327";
+
   const iframe = document.getElementById("dashboard-frame");
   const loading = document.getElementById("loading");
   const errorBanner = document.getElementById("error-banner");
   const errorText = document.getElementById("error-text");
   const retryButton = document.getElementById("retry-btn");
   const statusText = document.getElementById("status-text");
+  const dashboardIdText = document.getElementById("dashboard-id");
 
   retryButton.addEventListener("click", () => {
     loadDashboard();
@@ -13,13 +16,19 @@
   loadDashboard();
 
   async function loadDashboard() {
+    const dashboardId = getDashboardIdFromPath();
+
+    if (dashboardIdText) {
+      dashboardIdText.textContent = dashboardId;
+    }
+
     setLoading(true, "Requesting a secure embed URL...");
     hideError();
     iframe.hidden = true;
     iframe.src = "";
 
     try {
-      const response = await fetch("/api/embed-url", {
+      const response = await fetch(`/api/embed-url/${dashboardId}`, {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -94,5 +103,10 @@
   function hideError() {
     errorBanner.hidden = true;
     errorText.textContent = "";
+  }
+
+  function getDashboardIdFromPath() {
+    const match = window.location.pathname.match(/^\/(\d+)\/?$/);
+    return match ? match[1] : DEFAULT_DASHBOARD_ID;
   }
 })();

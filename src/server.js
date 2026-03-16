@@ -5,6 +5,20 @@ const express = require("express");
 const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 
+// Keep non-sensitive embed settings static in code to reduce env complexity.
+const STATIC_LOOKER_SETTINGS = Object.freeze({
+  lookerBaseUrl: "https://nordward.cloud.looker.com",
+  embedPathPrefix: "/embed/dashboards",
+  defaultDashboardId: "1327",
+  externalUserId: "public-dashboard-viewer",
+  firstName: "Public",
+  lastName: "Viewer",
+  permissions: ["see_looks", "see_user_dashboards", "access_data"],
+  models: ["your_model"],
+  groupIds: [],
+  userAttributes: {},
+});
+
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -53,16 +67,22 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
+app.get("/:dashboardId(\\d+)", (_req, res) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
 app.get("/healthz", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
-app.get("/api/embed-url", embedUrlLimiter, async (_req, res) => {
+app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) => {
   try {
+    const dashboardId = req.params.dashboardId;
+    const embedTargetUrl = buildEmbedTargetUrl(config, dashboardId);
     const accessToken = await getLookerAccessToken(config);
-    const signedUrl = await getSignedEmbedUrl(config, accessToken);
+    const signedUrl = await getSignedEmbedUrl(config, accessToken, embedTargetUrl);
 
-    res.status(200).json({ url: signedUrl });
+    res.status(200).json({ url: signedUrl, dashboardId });
   } catch (error) {
     const publicError = toPublicError(error);
 
@@ -92,7 +112,7 @@ app.use((_req, res) => {
 
 const server = app.listen(config.port, () => {
   console.log(
-    `Server listening on port ${config.port}. Embed target path is ${config.embedTargetPath}.`
+    `Server listening on port ${config.port}. Dashboard route format is /:dashboardId (default ${config.defaultDashboardId}).`
   );
 });
 
@@ -102,22 +122,9 @@ process.on("SIGTERM", () => {
 });
 
 function loadConfig() {
-  const missing = [
-    "LOOKER_BASE_URL",
-    "LOOKER_CLIENT_ID",
-    "LOOKER_CLIENT_SECRET",
-    "LOOKER_EMBED_TARGET_PATH",
-    "LOOKER_EXTERNAL_USER_ID",
-    "LOOKER_FIRST_NAME",
-    "LOOKER_LAST_NAME",
-    "LOOKER_PERMISSIONS",
-    "LOOKER_MODELS",
-    "LOOKER_USER_ATTRIBUTES_JSON",
-  ].filter((key) => !process.env[key] || process.env[key].trim() === "");
-
-  if (process.env.LOOKER_GROUP_IDS === undefined) {
-    missing.push("LOOKER_GROUP_IDS");
-  }
+  const missing = ["LOOKER_CLIENT_ID", "LOOKER_CLIENT_SECRET"].filter(
+    (key) => !process.env[key] || process.env[key].trim() === ""
+  );
 
   if (missing.length) {
     failFast(
@@ -125,17 +132,12 @@ function loadConfig() {
     );
   }
 
-  const lookerBaseUrl = normalizeLookerBaseUrl(process.env.LOOKER_BASE_URL);
-  const embedTargetPath = process.env.LOOKER_EMBED_TARGET_PATH.trim();
-  const embedTargetUrl = buildEmbedTargetUrl(lookerBaseUrl, embedTargetPath);
-  const permissions = parseCsvString(
-    process.env.LOOKER_PERMISSIONS,
-    "LOOKER_PERMISSIONS"
+  const lookerBaseUrl = normalizeLookerBaseUrl(STATIC_LOOKER_SETTINGS.lookerBaseUrl);
+  const embedPathPrefix = normalizeEmbedPathPrefix(
+    STATIC_LOOKER_SETTINGS.embedPathPrefix
   );
-  const models = parseCsvString(process.env.LOOKER_MODELS, "LOOKER_MODELS");
-  const groupIds = parseGroupIds(process.env.LOOKER_GROUP_IDS || "");
-  const userAttributes = parseUserAttributes(
-    process.env.LOOKER_USER_ATTRIBUTES_JSON
+  const defaultDashboardId = normalizeDashboardId(
+    STATIC_LOOKER_SETTINGS.defaultDashboardId
   );
   const sessionLength = parsePositiveInt(
     process.env.LOOKER_SESSION_LENGTH || "3600",
@@ -150,17 +152,17 @@ function loadConfig() {
   return {
     port,
     lookerBaseUrl,
+    embedPathPrefix,
+    defaultDashboardId,
     lookerClientId: process.env.LOOKER_CLIENT_ID,
     lookerClientSecret: process.env.LOOKER_CLIENT_SECRET,
-    embedTargetPath,
-    embedTargetUrl,
-    externalUserId: process.env.LOOKER_EXTERNAL_USER_ID,
-    firstName: process.env.LOOKER_FIRST_NAME,
-    lastName: process.env.LOOKER_LAST_NAME,
-    permissions,
-    models,
-    groupIds,
-    userAttributes,
+    externalUserId: STATIC_LOOKER_SETTINGS.externalUserId,
+    firstName: STATIC_LOOKER_SETTINGS.firstName,
+    lastName: STATIC_LOOKER_SETTINGS.lastName,
+    permissions: [...STATIC_LOOKER_SETTINGS.permissions],
+    models: [...STATIC_LOOKER_SETTINGS.models],
+    groupIds: [...STATIC_LOOKER_SETTINGS.groupIds],
+    userAttributes: { ...STATIC_LOOKER_SETTINGS.userAttributes },
     sessionLength,
     embedUrlRateLimitMax,
   };
@@ -170,68 +172,19 @@ function normalizeLookerBaseUrl(value) {
   try {
     const parsed = new URL(value);
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      failFast("LOOKER_BASE_URL must start with http:// or https://");
+      failFast("Static lookerBaseUrl must start with http:// or https://.");
     }
     return parsed.origin;
   } catch (_error) {
-    failFast("LOOKER_BASE_URL must be a valid URL.");
+    failFast("Static lookerBaseUrl must be a valid URL.");
   }
 }
 
-function buildEmbedTargetUrl(lookerBaseUrl, targetPath) {
-  if (!targetPath.startsWith("/")) {
-    failFast("LOOKER_EMBED_TARGET_PATH must start with '/'.");
+function normalizeEmbedPathPrefix(value) {
+  if (typeof value !== "string" || !value.startsWith("/")) {
+    failFast("Static embedPathPrefix must start with '/'.");
   }
-
-  const targetUrl = new URL(targetPath, lookerBaseUrl);
-  if (targetUrl.origin !== new URL(lookerBaseUrl).origin) {
-    failFast("LOOKER_EMBED_TARGET_PATH must resolve to LOOKER_BASE_URL.");
-  }
-
-  return targetUrl.toString();
-}
-
-function parseCsvString(value, envName) {
-  const items = value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-  if (items.length === 0) {
-    failFast(`${envName} must contain at least one value.`);
-  }
-
-  return items;
-}
-
-function parseGroupIds(value) {
-  if (!value.trim()) {
-    return [];
-  }
-
-  return value
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean)
-    .map((id) => {
-      const numeric = Number(id);
-      if (!Number.isInteger(numeric) || numeric < 0) {
-        failFast("LOOKER_GROUP_IDS must contain comma-separated integer IDs.");
-      }
-      return numeric;
-    });
-}
-
-function parseUserAttributes(value) {
-  try {
-    const parsed = JSON.parse(value);
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-      failFast("LOOKER_USER_ATTRIBUTES_JSON must be a valid JSON object.");
-    }
-    return parsed;
-  } catch (_error) {
-    failFast("LOOKER_USER_ATTRIBUTES_JSON must be valid JSON.");
-  }
+  return value.replace(/\/+$/, "");
 }
 
 function parsePositiveInt(raw, envName) {
@@ -240,6 +193,25 @@ function parsePositiveInt(raw, envName) {
     failFast(`${envName} must be a positive integer.`);
   }
   return parsed;
+}
+
+function normalizeDashboardId(value) {
+  const id = String(value || "").trim();
+  if (!/^\d+$/.test(id)) {
+    failFast("Static defaultDashboardId must be numeric.");
+  }
+  return id;
+}
+
+function buildEmbedTargetUrl(runtimeConfig, dashboardId) {
+  const normalizedId = String(dashboardId || "").trim();
+  if (!/^\d+$/.test(normalizedId)) {
+    throw new ApiError(400, "INVALID_DASHBOARD_ID", "Dashboard ID must be numeric.");
+  }
+
+  const targetPath = `${runtimeConfig.embedPathPrefix}/${normalizedId}`;
+  const targetUrl = new URL(targetPath, runtimeConfig.lookerBaseUrl);
+  return targetUrl.toString();
 }
 
 async function getLookerAccessToken(runtimeConfig) {
@@ -279,10 +251,10 @@ async function getLookerAccessToken(runtimeConfig) {
   return payload.access_token;
 }
 
-async function getSignedEmbedUrl(runtimeConfig, accessToken) {
+async function getSignedEmbedUrl(runtimeConfig, accessToken, targetUrl) {
   const url = `${runtimeConfig.lookerBaseUrl}/api/4.0/embed/sso_url`;
   const requestBody = {
-    target_url: runtimeConfig.embedTargetUrl,
+    target_url: targetUrl,
     session_length: runtimeConfig.sessionLength,
     external_user_id: runtimeConfig.externalUserId,
     first_name: runtimeConfig.firstName,
