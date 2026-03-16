@@ -29,9 +29,10 @@ To keep configuration simple, non-sensitive values are static in
 - Looker base URL (`https://nordward.cloud.looker.com`)
 - embed path prefix (`/embed/dashboards`)
 - default dashboard ID (`1327`)
-- embed user profile, permissions, models, group IDs, user attributes
+- embed user profile defaults (external user ID, first/last name)
 
-If you need to change these, edit `src/server.js`.
+`LOOKER_MODELS` is intentionally environment-based because it must match your
+real Looker model names.
 
 ## Environment variables
 
@@ -39,12 +40,17 @@ Required:
 
 - `LOOKER_CLIENT_ID`
 - `LOOKER_CLIENT_SECRET`
+- `LOOKER_MODELS` (comma-separated model names the embed user can access)
 
 Optional:
 
 - `PORT` (default: `8080`)
 - `LOOKER_SESSION_LENGTH` (default: `3600`)
 - `EMBED_URL_RATE_LIMIT_MAX` (default: `30` requests/minute)
+- `LOOKER_PERMISSIONS` (defaults to `see_looks,see_user_dashboards,access_data`)
+- `LOOKER_EMBED_PATH_PREFIX` (default: `/embed/dashboards`)
+- `LOOKER_GROUP_IDS` (comma-separated integer IDs)
+- `LOOKER_USER_ATTRIBUTES_JSON` (JSON object string)
 
 ## Local development
 
@@ -75,6 +81,7 @@ Create secrets (production):
 ```bash
 printf '%s' 'REPLACE_WITH_ROTATED_CLIENT_ID' | gcloud secrets create LOOKER_CLIENT_ID --data-file=- --replication-policy=automatic
 printf '%s' 'REPLACE_WITH_ROTATED_CLIENT_SECRET' | gcloud secrets create LOOKER_CLIENT_SECRET --data-file=- --replication-policy=automatic
+printf '%s' 'REPLACE_WITH_LOOKER_MODEL_NAME' | gcloud secrets create LOOKER_MODELS --data-file=- --replication-policy=automatic
 ```
 
 Grant Secret Manager access to runtime service account:
@@ -95,8 +102,16 @@ gcloud run deploy "$SERVICE" \
   --service-account "$RUNTIME_SA" \
   --allow-unauthenticated \
   --set-env-vars "PORT=8080" \
-  --set-secrets "LOOKER_CLIENT_ID=LOOKER_CLIENT_ID:latest,LOOKER_CLIENT_SECRET=LOOKER_CLIENT_SECRET:latest"
+  --set-secrets "LOOKER_CLIENT_ID=LOOKER_CLIENT_ID:latest,LOOKER_CLIENT_SECRET=LOOKER_CLIENT_SECRET:latest,LOOKER_MODELS=LOOKER_MODELS:latest"
 ```
+
+## Troubleshooting `LOOKER_EMBED_FAILED`
+
+If Cloud Run logs show `LOOKER_EMBED_FAILED`, the most common cause is a model/permission mismatch for the embed user.
+
+1. Verify `LOOKER_MODELS` contains the exact Looker model names needed by dashboard `1327`.
+2. If needed, set `LOOKER_PERMISSIONS` explicitly with the required permissions for that dashboard.
+3. Check Cloud Run logs for the `details` field now included in `Embed URL generation failed` events.
 
 ## Security notes
 

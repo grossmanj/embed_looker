@@ -14,7 +14,7 @@ const STATIC_LOOKER_SETTINGS = Object.freeze({
   firstName: "Public",
   lastName: "Viewer",
   permissions: ["see_looks", "see_user_dashboards", "access_data"],
-  models: ["your_model"],
+  models: [],
   groupIds: [],
   userAttributes: {},
 });
@@ -90,6 +90,7 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
       code: publicError.code,
       statusCode: publicError.statusCode,
       cause: error.message,
+      details: error.details,
     });
 
     res.status(publicError.statusCode).json({
@@ -122,7 +123,7 @@ process.on("SIGTERM", () => {
 });
 
 function loadConfig() {
-  const missing = ["LOOKER_CLIENT_ID", "LOOKER_CLIENT_SECRET"].filter(
+  const missing = ["LOOKER_CLIENT_ID", "LOOKER_CLIENT_SECRET", "LOOKER_MODELS"].filter(
     (key) => !process.env[key] || process.env[key].trim() === ""
   );
 
@@ -133,12 +134,25 @@ function loadConfig() {
   }
 
   const lookerBaseUrl = normalizeLookerBaseUrl(STATIC_LOOKER_SETTINGS.lookerBaseUrl);
-  const embedPathPrefix = normalizeEmbedPathPrefix(
-    STATIC_LOOKER_SETTINGS.embedPathPrefix
-  );
+  const embedPathPrefix = normalizeEmbedPathPrefix(process.env.LOOKER_EMBED_PATH_PREFIX || STATIC_LOOKER_SETTINGS.embedPathPrefix);
   const defaultDashboardId = normalizeDashboardId(
     STATIC_LOOKER_SETTINGS.defaultDashboardId
   );
+  const permissions = parseCsvString(
+    process.env.LOOKER_PERMISSIONS ||
+      STATIC_LOOKER_SETTINGS.permissions.join(","),
+    "LOOKER_PERMISSIONS"
+  );
+  const models = parseCsvString(
+    process.env.LOOKER_MODELS || STATIC_LOOKER_SETTINGS.models.join(","),
+    "LOOKER_MODELS"
+  );
+  const groupIds = process.env.LOOKER_GROUP_IDS
+    ? parseGroupIds(process.env.LOOKER_GROUP_IDS)
+    : [...STATIC_LOOKER_SETTINGS.groupIds];
+  const userAttributes = process.env.LOOKER_USER_ATTRIBUTES_JSON
+    ? parseUserAttributes(process.env.LOOKER_USER_ATTRIBUTES_JSON)
+    : { ...STATIC_LOOKER_SETTINGS.userAttributes };
   const sessionLength = parsePositiveInt(
     process.env.LOOKER_SESSION_LENGTH || "3600",
     "LOOKER_SESSION_LENGTH"
@@ -159,10 +173,10 @@ function loadConfig() {
     externalUserId: STATIC_LOOKER_SETTINGS.externalUserId,
     firstName: STATIC_LOOKER_SETTINGS.firstName,
     lastName: STATIC_LOOKER_SETTINGS.lastName,
-    permissions: [...STATIC_LOOKER_SETTINGS.permissions],
-    models: [...STATIC_LOOKER_SETTINGS.models],
-    groupIds: [...STATIC_LOOKER_SETTINGS.groupIds],
-    userAttributes: { ...STATIC_LOOKER_SETTINGS.userAttributes },
+    permissions,
+    models,
+    groupIds,
+    userAttributes,
     sessionLength,
     embedUrlRateLimitMax,
   };
@@ -182,9 +196,52 @@ function normalizeLookerBaseUrl(value) {
 
 function normalizeEmbedPathPrefix(value) {
   if (typeof value !== "string" || !value.startsWith("/")) {
-    failFast("Static embedPathPrefix must start with '/'.");
+    failFast("LOOKER_EMBED_PATH_PREFIX must start with '/'.");
   }
   return value.replace(/\/+$/, "");
+}
+
+function parseCsvString(value, envName) {
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (items.length === 0) {
+    failFast(`${envName} must contain at least one value.`);
+  }
+
+  return items;
+}
+
+function parseGroupIds(value) {
+  if (!value.trim()) {
+    return [];
+  }
+
+  return value
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .map((id) => {
+      const numeric = Number(id);
+      if (!Number.isInteger(numeric) || numeric < 0) {
+        failFast("LOOKER_GROUP_IDS must contain comma-separated integer IDs.");
+      }
+      return numeric;
+    });
+}
+
+function parseUserAttributes(value) {
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+      failFast("LOOKER_USER_ATTRIBUTES_JSON must be a valid JSON object.");
+    }
+    return parsed;
+  } catch (_error) {
+    failFast("LOOKER_USER_ATTRIBUTES_JSON must be valid JSON.");
+  }
 }
 
 function parsePositiveInt(raw, envName) {
@@ -236,7 +293,8 @@ async function getLookerAccessToken(runtimeConfig) {
     throw new ApiError(
       502,
       "LOOKER_AUTH_FAILED",
-      "Could not authenticate to Looker."
+      "Could not authenticate to Looker.",
+      extractLookerErrorDetails(payload)
     );
   }
 
@@ -282,7 +340,8 @@ async function getSignedEmbedUrl(runtimeConfig, accessToken, targetUrl) {
     throw new ApiError(
       502,
       "LOOKER_EMBED_FAILED",
-      "Could not generate a signed embed URL."
+      "Could not generate a signed embed URL.",
+      extractLookerErrorDetails(payload)
     );
   }
 
@@ -323,11 +382,40 @@ function failFast(message) {
   process.exit(1);
 }
 
+function extractLookerErrorDetails(payload) {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+
+  if (typeof payload.message === "string") {
+    return { message: payload.message };
+  }
+
+  if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+    const first = payload.errors[0];
+    if (typeof first === "string") {
+      return { error: first };
+    }
+    if (first && typeof first === "object") {
+      const summary = {};
+      for (const key of ["field", "code", "message"]) {
+        if (typeof first[key] === "string") {
+          summary[key] = first[key];
+        }
+      }
+      return Object.keys(summary).length ? summary : undefined;
+    }
+  }
+
+  return undefined;
+}
+
 class ApiError extends Error {
-  constructor(statusCode, code, message) {
+  constructor(statusCode, code, message, details) {
     super(message);
     this.name = "ApiError";
     this.statusCode = statusCode;
     this.code = code;
+    this.details = details;
   }
 }
