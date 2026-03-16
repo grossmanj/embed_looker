@@ -8,7 +8,7 @@ const rateLimit = require("express-rate-limit");
 // Keep non-sensitive embed settings static in code to reduce env complexity.
 const STATIC_LOOKER_SETTINGS = Object.freeze({
   lookerBaseUrl: "https://nordward.cloud.looker.com",
-  embedPathPrefix: "/embed/dashboards",
+  embedPathPrefix: "/dashboards",
   defaultDashboardId: "1327",
   externalUserId: "public-dashboard-viewer",
   firstName: "Public",
@@ -78,9 +78,13 @@ app.get("/healthz", (_req, res) => {
 app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) => {
   try {
     const dashboardId = req.params.dashboardId;
-    const embedTargetUrl = buildEmbedTargetUrl(config, dashboardId);
-    const accessToken = await getLookerAccessToken(config);
-    const signedUrl = await getSignedEmbedUrl(config, accessToken, embedTargetUrl);
+    const targetUrlCandidates = buildEmbedTargetUrlCandidates(config, dashboardId);
+    const lookerAuth = await getLookerAccessToken(config);
+    const signedUrl = await getSignedEmbedUrl(
+      config,
+      lookerAuth,
+      targetUrlCandidates
+    );
 
     res.status(200).json({ url: signedUrl, dashboardId });
   } catch (error) {
@@ -260,15 +264,28 @@ function normalizeDashboardId(value) {
   return id;
 }
 
-function buildEmbedTargetUrl(runtimeConfig, dashboardId) {
+function buildEmbedTargetUrlCandidates(runtimeConfig, dashboardId) {
   const normalizedId = String(dashboardId || "").trim();
   if (!/^\d+$/.test(normalizedId)) {
     throw new ApiError(400, "INVALID_DASHBOARD_ID", "Dashboard ID must be numeric.");
   }
 
-  const targetPath = `${runtimeConfig.embedPathPrefix}/${normalizedId}`;
-  const targetUrl = new URL(targetPath, runtimeConfig.lookerBaseUrl);
-  return targetUrl.toString();
+  const candidates = [];
+  const seen = new Set();
+
+  function addPath(pathCandidate) {
+    const targetUrl = new URL(pathCandidate, runtimeConfig.lookerBaseUrl).toString();
+    if (!seen.has(targetUrl)) {
+      seen.add(targetUrl);
+      candidates.push(targetUrl);
+    }
+  }
+
+  addPath(`${runtimeConfig.embedPathPrefix}/${normalizedId}`);
+  addPath(`/dashboards/${normalizedId}`);
+  addPath(`/embed/dashboards/${normalizedId}`);
+
+  return candidates;
 }
 
 async function getLookerAccessToken(runtimeConfig) {
@@ -306,55 +323,74 @@ async function getLookerAccessToken(runtimeConfig) {
     );
   }
 
-  return payload.access_token;
+  return {
+    accessToken: payload.access_token,
+    tokenType: normalizeAuthTokenType(payload.token_type),
+  };
 }
 
-async function getSignedEmbedUrl(runtimeConfig, accessToken, targetUrl) {
+async function getSignedEmbedUrl(runtimeConfig, lookerAuth, targetUrlCandidates) {
   const url = `${runtimeConfig.lookerBaseUrl}/api/4.0/embed/sso_url`;
-  const requestBody = {
-    target_url: targetUrl,
-    session_length: runtimeConfig.sessionLength,
-    external_user_id: runtimeConfig.externalUserId,
-    first_name: runtimeConfig.firstName,
-    last_name: runtimeConfig.lastName,
-    permissions: runtimeConfig.permissions,
-    models: runtimeConfig.models,
-    group_ids: runtimeConfig.groupIds,
-    user_attributes: runtimeConfig.userAttributes,
-    force_logout_login: true,
+  const authHeaders = buildAuthorizationHeaderCandidates(lookerAuth);
+
+  let lastFailure = {
+    statusCode: 502,
+    message: "Could not generate a signed embed URL.",
+    details: undefined,
   };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `token ${accessToken}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify(requestBody),
-  });
+  for (const targetUrl of targetUrlCandidates) {
+    const requestBody = {
+      target_url: targetUrl,
+      session_length: runtimeConfig.sessionLength,
+      external_user_id: runtimeConfig.externalUserId,
+      first_name: runtimeConfig.firstName,
+      last_name: runtimeConfig.lastName,
+      permissions: runtimeConfig.permissions,
+      models: runtimeConfig.models,
+      group_ids: runtimeConfig.groupIds,
+      user_attributes: runtimeConfig.userAttributes,
+      force_logout_login: true,
+    };
 
-  const payload = await readJsonSafely(response);
+    for (const authorization of authHeaders) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: authorization,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
 
-  if (!response.ok) {
-    throw new ApiError(
-      502,
-      "LOOKER_EMBED_FAILED",
-      "Could not generate a signed embed URL.",
-      extractLookerErrorDetails(payload)
-    );
+      const payload = await readJsonSafely(response);
+      const signedUrl = payload && (payload.url || payload.sso_url);
+      if (response.ok && signedUrl) {
+        return signedUrl;
+      }
+
+      lastFailure = {
+        statusCode: response.status || 502,
+        message: !response.ok
+          ? "Could not generate a signed embed URL."
+          : "Looker response did not include a signed embed URL.",
+        details: {
+          ...(extractLookerErrorDetails(payload) || {}),
+          target_url: targetUrl,
+          auth_scheme: authorization.split(" ")[0],
+          status: response.status || undefined,
+        },
+      };
+    }
   }
 
-  const signedUrl = payload && (payload.url || payload.sso_url);
-  if (!signedUrl) {
-    throw new ApiError(
-      502,
-      "LOOKER_EMBED_FAILED",
-      "Looker response did not include a signed embed URL."
-    );
-  }
-
-  return signedUrl;
+  throw new ApiError(
+    502,
+    "LOOKER_EMBED_FAILED",
+    lastFailure.message,
+    lastFailure.details
+  );
 }
 
 async function readJsonSafely(response) {
@@ -380,6 +416,36 @@ function toPublicError(error) {
 function failFast(message) {
   console.error(message);
   process.exit(1);
+}
+
+function normalizeAuthTokenType(tokenType) {
+  const normalized = String(tokenType || "").trim().toLowerCase();
+  if (normalized === "bearer") {
+    return "Bearer";
+  }
+  if (normalized === "token") {
+    return "token";
+  }
+  return "Bearer";
+}
+
+function buildAuthorizationHeaderCandidates(lookerAuth) {
+  const candidates = [];
+  const seen = new Set();
+
+  const raw = lookerAuth.accessToken;
+  const first = `${lookerAuth.tokenType} ${raw}`;
+  const bearer = `Bearer ${raw}`;
+  const token = `token ${raw}`;
+
+  for (const candidate of [first, bearer, token]) {
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      candidates.push(candidate);
+    }
+  }
+
+  return candidates;
 }
 
 function extractLookerErrorDetails(payload) {

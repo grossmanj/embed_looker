@@ -10,7 +10,7 @@ Production-ready Node.js 20 + Express app that embeds Looker dashboards on Googl
 
 The backend only builds embed URLs in this fixed format:
 
-- `https://nordward.cloud.looker.com/embed/dashboards/<dashboardId>`
+- `https://nordward.cloud.looker.com/dashboards/<dashboardId>`
 
 No Looker credentials are exposed to the browser.
 
@@ -27,7 +27,7 @@ To keep configuration simple, non-sensitive values are static in
 `src/server.js` (`STATIC_LOOKER_SETTINGS`):
 
 - Looker base URL (`https://nordward.cloud.looker.com`)
-- embed path prefix (`/embed/dashboards`)
+- embed path prefix (`/dashboards`)
 - default dashboard ID (`1327`)
 - embed user profile defaults (external user ID, first/last name)
 
@@ -48,7 +48,7 @@ Optional:
 - `LOOKER_SESSION_LENGTH` (default: `3600`)
 - `EMBED_URL_RATE_LIMIT_MAX` (default: `30` requests/minute)
 - `LOOKER_PERMISSIONS` (defaults to `see_looks,see_user_dashboards,access_data`)
-- `LOOKER_EMBED_PATH_PREFIX` (default: `/embed/dashboards`)
+- `LOOKER_EMBED_PATH_PREFIX` (default: `/dashboards`)
 - `LOOKER_GROUP_IDS` (comma-separated integer IDs)
 - `LOOKER_USER_ATTRIBUTES_JSON` (JSON object string)
 
