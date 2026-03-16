@@ -1,5 +1,6 @@
 :root {
   color-scheme: light;
+  --app-height: 100dvh;
 }
 
 * {
@@ -23,9 +24,14 @@ body {
 }
 
 .viewport {
-  position: relative;
-  width: 100vw;
-  height: 100dvh;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: var(--app-height);
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
   overflow: hidden;
 }
 

@@ -8,6 +8,13 @@
   const errorText = document.getElementById("error-text");
   const retryButton = document.getElementById("retry-btn");
 
+  updateViewportHeight();
+  window.addEventListener("resize", updateViewportHeight);
+  window.addEventListener("orientationchange", updateViewportHeight);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", updateViewportHeight);
+  }
+
   iframe.addEventListener("load", () => {
     hideError();
     setLoading(false);
@@ -79,5 +86,12 @@
   function getDashboardIdFromPath() {
     const match = window.location.pathname.match(/^\/(\d+)\/?$/);
     return match ? match[1] : DEFAULT_DASHBOARD_ID;
+  }
+
+  function updateViewportHeight() {
+    const height = window.visualViewport
+      ? window.visualViewport.height
+      : window.innerHeight;
+    document.documentElement.style.setProperty("--app-height", `${height}px`);
   }
 })();
