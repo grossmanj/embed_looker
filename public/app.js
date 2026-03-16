@@ -8,6 +8,11 @@
   const errorText = document.getElementById("error-text");
   const retryButton = document.getElementById("retry-btn");
 
+  iframe.addEventListener("load", () => {
+    hideError();
+    setLoading(false);
+  });
+
   retryButton.addEventListener("click", () => {
     loadDashboard();
   });
@@ -45,9 +50,16 @@
       iframe.src = payload.url;
       iframe.hidden = false;
 
-      await waitForFrameLoad(iframe, 25000);
+      await waitForFrameLoad(iframe, 90000);
       setLoading(false);
     } catch (error) {
+      if (error?.code === "IFRAME_LOAD_TIMEOUT") {
+        // Some Looker dashboards take longer to complete the iframe load event.
+        // Avoid blocking the visible dashboard with an error banner.
+        setLoading(false);
+        return;
+      }
+
       showError(
         error.message ||
           "Unable to load the dashboard right now. Please try again."
@@ -60,7 +72,9 @@
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         cleanup();
-        reject(new Error("Timed out while loading the dashboard."));
+        const timeoutError = new Error("Timed out while loading the dashboard.");
+        timeoutError.code = "IFRAME_LOAD_TIMEOUT";
+        reject(timeoutError);
       }, timeoutMs);
 
       function onLoad() {
