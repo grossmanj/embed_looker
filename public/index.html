@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Public Looker Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main class="page">
+      <section class="panel">
+        <h1>Public Looker Dashboard</h1>
+        <p class="subtitle">
+          This page securely requests a signed embed URL from the backend and
+          loads your Looker dashboard.
+        </p>
+
+        <p id="status-text" class="status" aria-live="polite">
+          Initializing dashboard...
+        </p>
+
+        <div id="loading" class="loading" role="status">
+          Loading secure dashboard URL...
+        </div>
+
+        <div id="error-banner" class="error-banner" role="alert" hidden>
+          <p id="error-text">Dashboard could not be loaded.</p>
+          <button id="retry-btn" type="button">Retry</button>
+        </div>
+
+        <div class="frame-shell">
+          <iframe
+            id="dashboard-frame"
+            title="Looker Dashboard"
+            loading="lazy"
+            referrerpolicy="strict-origin-when-cross-origin"
+            hidden
+          ></iframe>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
