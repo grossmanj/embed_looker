@@ -2,12 +2,11 @@
   const DEFAULT_DASHBOARD_ID = "1327";
 
   const iframe = document.getElementById("dashboard-frame");
-  const loading = document.getElementById("loading");
-  const errorBanner = document.getElementById("error-banner");
+  const loadingOverlay = document.getElementById("loading-overlay");
+  const loadingText = document.getElementById("loading-text");
+  const errorOverlay = document.getElementById("error-overlay");
   const errorText = document.getElementById("error-text");
   const retryButton = document.getElementById("retry-btn");
-  const statusText = document.getElementById("status-text");
-  const dashboardIdText = document.getElementById("dashboard-id");
 
   retryButton.addEventListener("click", () => {
     loadDashboard();
@@ -17,12 +16,7 @@
 
   async function loadDashboard() {
     const dashboardId = getDashboardIdFromPath();
-
-    if (dashboardIdText) {
-      dashboardIdText.textContent = dashboardId;
-    }
-
-    setLoading(true, "Requesting a secure embed URL...");
+    setLoading(true, "Requesting secure dashboard URL...");
     hideError();
     iframe.hidden = true;
     iframe.src = "";
@@ -47,18 +41,18 @@
         throw new Error("The server returned an invalid embed URL.");
       }
 
-      setLoading(true, "Loading dashboard content...");
+      setLoading(true, "Loading dashboard...");
       iframe.src = payload.url;
       iframe.hidden = false;
 
       await waitForFrameLoad(iframe, 25000);
-      setLoading(false, "Dashboard loaded.");
+      setLoading(false);
     } catch (error) {
       showError(
         error.message ||
           "Unable to load the dashboard right now. Please try again."
       );
-      setLoading(false, "Dashboard unavailable.");
+      setLoading(false);
     }
   }
 
@@ -91,17 +85,19 @@
   }
 
   function setLoading(isLoading, message) {
-    loading.hidden = !isLoading;
-    statusText.textContent = message;
+    loadingOverlay.hidden = !isLoading;
+    if (message) {
+      loadingText.textContent = message;
+    }
   }
 
   function showError(message) {
     errorText.textContent = message;
-    errorBanner.hidden = false;
+    errorOverlay.hidden = false;
   }
 
   function hideError() {
-    errorBanner.hidden = true;
+    errorOverlay.hidden = true;
     errorText.textContent = "";
   }
 

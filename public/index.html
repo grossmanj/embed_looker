@@ -8,42 +8,25 @@
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <main class="page">
-      <section class="panel">
-        <h1>Public Looker Dashboard</h1>
-        <p class="subtitle">
-          Open this site with a dashboard ID path like <code>/1327</code> or
-          <code>/123</code>. The backend signs and loads
-          <code>/dashboards/&lt;id&gt;</code> securely.
-        </p>
+    <main class="viewport">
+      <iframe
+        id="dashboard-frame"
+        title="Looker Dashboard"
+        loading="lazy"
+        referrerpolicy="strict-origin-when-cross-origin"
+        hidden
+      ></iframe>
 
-        <p class="dashboard-meta">
-          Dashboard ID: <strong id="dashboard-id">1327</strong>
-        </p>
+      <div id="loading-overlay" class="overlay" role="status" aria-live="polite">
+        <p id="loading-text">Loading secure dashboard URL...</p>
+      </div>
 
-        <p id="status-text" class="status" aria-live="polite">
-          Initializing dashboard...
-        </p>
-
-        <div id="loading" class="loading" role="status">
-          Loading secure dashboard URL...
-        </div>
-
-        <div id="error-banner" class="error-banner" role="alert" hidden>
+      <div id="error-overlay" class="overlay overlay-error" role="alert" hidden>
+        <div class="error-card">
           <p id="error-text">Dashboard could not be loaded.</p>
           <button id="retry-btn" type="button">Retry</button>
         </div>
-
-        <div class="frame-shell">
-          <iframe
-            id="dashboard-frame"
-            title="Looker Dashboard"
-            loading="lazy"
-            referrerpolicy="strict-origin-when-cross-origin"
-            hidden
-          ></iframe>
-        </div>
-      </section>
+      </div>
     </main>
   </body>
 </html>
