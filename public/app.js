@@ -16,6 +16,8 @@
 
   let loadInFlight = false;
   let hasLoadedAtLeastOnce = false;
+  let lookerOrigin = null;
+  let tokenRequestInFlight = false;
   let lastSuccessfulEmbedAt = 0;
   let lastWatchdogTick = Date.now();
   let lastResumeRefreshAt = 0;
@@ -45,6 +47,30 @@
   window.addEventListener("focus", triggerResumeRefresh);
   window.addEventListener("pageshow", triggerResumeRefresh);
   window.addEventListener("online", triggerResumeRefresh);
+  window.addEventListener("message", (event) => {
+    if (!iframe.contentWindow || event.source !== iframe.contentWindow) {
+      return;
+    }
+
+    if (lookerOrigin && event.origin !== lookerOrigin) {
+      return;
+    }
+
+    const payload = parseMessagePayload(event.data);
+    if (
+      !payload ||
+      !(
+        payload.type === "session:tokens:request" ||
+        payload.type === "session:tokens"
+      ) ||
+      payload.api_token ||
+      payload.navigation_token
+    ) {
+      return;
+    }
+
+    void sendCookielessTokens();
+  });
 
   setInterval(() => {
     const now = Date.now();
@@ -103,6 +129,7 @@
         throw new Error("The server returned an invalid embed URL.");
       }
 
+      lookerOrigin = getOrigin(payload.url);
       iframe.src = payload.url;
       iframe.hidden = false;
       lastSuccessfulEmbedAt = Date.now();
@@ -132,6 +159,45 @@
     void loadDashboard({ interactive: false, force: true });
   }
 
+  async function sendCookielessTokens() {
+    if (tokenRequestInFlight) {
+      return;
+    }
+
+    tokenRequestInFlight = true;
+
+    try {
+      const response = await fetch(`/api/embed-tokens/${dashboardId}`, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload?.api_token || !payload?.navigation_token) {
+        throw new Error("Failed to refresh embed tokens.");
+      }
+
+      if (!iframe.contentWindow || !lookerOrigin) {
+        return;
+      }
+
+      iframe.contentWindow.postMessage(
+        {
+          type: "session:tokens",
+          api_token: payload.api_token,
+          navigation_token: payload.navigation_token,
+        },
+        lookerOrigin
+      );
+    } catch (_error) {
+      void loadDashboard({ interactive: false, force: true });
+    } finally {
+      tokenRequestInFlight = false;
+    }
+  }
+
   function setLoading(isLoading, message) {
     loadingOverlay.hidden = !isLoading;
     if (message) {
@@ -159,5 +225,29 @@
       ? window.visualViewport.height
       : window.innerHeight;
     document.documentElement.style.setProperty("--app-height", `${height}px`);
+  }
+
+  function getOrigin(url) {
+    try {
+      return new URL(url).origin;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function parseMessagePayload(value) {
+    if (value && typeof value === "object") {
+      return value;
+    }
+
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    try {
+      return JSON.parse(value);
+    } catch (_error) {
+      return null;
+    }
   }
 })();

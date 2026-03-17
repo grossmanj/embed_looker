@@ -30,6 +30,15 @@ app.set("trust proxy", 1);
 
 const config = loadConfig();
 const lookerOrigin = new URL(config.lookerBaseUrl).origin;
+const COOKILESS_SESSION_TTL_MS = 2 * 60 * 60 * 1000;
+const cookielessSessionStore = new Map();
+
+const cookielessCleanupTimer = setInterval(() => {
+  pruneCookielessSessions();
+}, 5 * 60 * 1000);
+if (typeof cookielessCleanupTimer.unref === "function") {
+  cookielessCleanupTimer.unref();
+}
 
 app.use(
   helmet({
@@ -87,17 +96,29 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
     const targetUrl = buildEmbedTargetUrl(config, dashboardId);
     const embedDomain = buildEmbedDomain(req);
     const userAgent = req.get("user-agent") || "embed-looker-cloud-run";
+    const clientSessionKey = buildCookielessClientSessionKey(req, dashboardId);
+    const priorSession = getCookielessSession(clientSessionKey);
     const lookerAuth = await getLookerAccessToken(config);
-    const signedUrl = await getCookielessEmbedUrl(
+    const embedResult = await getCookielessEmbedUrl(
       config,
       lookerAuth,
       targetUrl,
       embedDomain,
-      userAgent
+      userAgent,
+      priorSession?.sessionReferenceToken
     );
 
+    setCookielessSession(clientSessionKey, {
+      dashboardId,
+      sessionReferenceToken: embedResult.sessionReferenceToken,
+      apiToken: embedResult.apiToken,
+      navigationToken: embedResult.navigationToken,
+      expiresAt: Date.now() + COOKILESS_SESSION_TTL_MS,
+      updatedAt: Date.now(),
+    });
+
     res.set("Cache-Control", "no-store");
-    res.status(200).json({ url: signedUrl, dashboardId });
+    res.status(200).json({ url: embedResult.url, dashboardId });
   } catch (error) {
     const publicError = toPublicError(error);
 
@@ -116,6 +137,65 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
     });
   }
 });
+
+app.get(
+  "/api/embed-tokens/:dashboardId(\\d+)",
+  embedUrlLimiter,
+  async (req, res) => {
+    try {
+      const dashboardId = req.params.dashboardId;
+      const clientSessionKey = buildCookielessClientSessionKey(req, dashboardId);
+      const session = getCookielessSession(clientSessionKey);
+
+      if (!session || session.dashboardId !== dashboardId) {
+        throw new ApiError(
+          409,
+          "EMBED_SESSION_MISSING",
+          "No active cookieless embed session found. Reload the dashboard."
+        );
+      }
+
+      const userAgent = req.get("user-agent") || "embed-looker-cloud-run";
+      const lookerAuth = await getLookerAccessToken(config);
+      const tokens = await generateCookielessTokens(
+        config,
+        lookerAuth,
+        session,
+        userAgent
+      );
+
+      setCookielessSession(clientSessionKey, {
+        ...session,
+        apiToken: tokens.apiToken,
+        navigationToken: tokens.navigationToken,
+        expiresAt: Date.now() + COOKILESS_SESSION_TTL_MS,
+        updatedAt: Date.now(),
+      });
+
+      res.set("Cache-Control", "no-store");
+      res.status(200).json({
+        api_token: tokens.apiToken,
+        navigation_token: tokens.navigationToken,
+      });
+    } catch (error) {
+      const publicError = toPublicError(error);
+
+      console.error("Embed token refresh failed", {
+        code: publicError.code,
+        statusCode: publicError.statusCode,
+        cause: error.message,
+        details: error.details,
+      });
+
+      res.status(publicError.statusCode).json({
+        error: {
+          code: publicError.code,
+          message: publicError.message,
+        },
+      });
+    }
+  }
+);
 
 app.use((_req, res) => {
   res.status(404).json({
@@ -319,6 +399,39 @@ function buildEmbedDomain(req) {
   }
 }
 
+function buildCookielessClientSessionKey(req, dashboardId) {
+  const ip = req.ip || req.get("x-forwarded-for") || "unknown-ip";
+  const userAgent = req.get("user-agent") || "unknown-ua";
+  return `${dashboardId}|${ip}|${userAgent}`;
+}
+
+function getCookielessSession(sessionKey) {
+  const session = cookielessSessionStore.get(sessionKey);
+  if (!session) {
+    return null;
+  }
+
+  if (session.expiresAt <= Date.now()) {
+    cookielessSessionStore.delete(sessionKey);
+    return null;
+  }
+
+  return session;
+}
+
+function setCookielessSession(sessionKey, session) {
+  cookielessSessionStore.set(sessionKey, session);
+}
+
+function pruneCookielessSessions() {
+  const now = Date.now();
+  for (const [sessionKey, session] of cookielessSessionStore.entries()) {
+    if (!session || session.expiresAt <= now) {
+      cookielessSessionStore.delete(sessionKey);
+    }
+  }
+}
+
 async function getLookerAccessToken(runtimeConfig) {
   const url = `${runtimeConfig.lookerBaseUrl}/api/4.0/login`;
   const body = new URLSearchParams({
@@ -365,13 +478,15 @@ async function getCookielessEmbedUrl(
   lookerAuth,
   targetUrl,
   embedDomain,
-  userAgent
+  userAgent,
+  existingSessionReferenceToken
 ) {
   const tokens = await acquireCookielessSession(
     runtimeConfig,
     lookerAuth,
     embedDomain,
-    userAgent
+    userAgent,
+    existingSessionReferenceToken
   );
 
   targetUrl.searchParams.set("embed_domain", embedDomain);
@@ -381,14 +496,20 @@ async function getCookielessEmbedUrl(
     `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`
   );
 
-  return `${targetUrl.origin}/login/embed/${targetUri}?embed_authentication_token=${encodeURIComponent(tokens.authenticationToken)}`;
+  return {
+    url: `${targetUrl.origin}/login/embed/${targetUri}?embed_authentication_token=${encodeURIComponent(tokens.authenticationToken)}`,
+    sessionReferenceToken: tokens.sessionReferenceToken,
+    apiToken: tokens.apiToken,
+    navigationToken: tokens.navigationToken,
+  };
 }
 
 async function acquireCookielessSession(
   runtimeConfig,
   lookerAuth,
   embedDomain,
-  userAgent
+  userAgent,
+  existingSessionReferenceToken
 ) {
   const url = `${runtimeConfig.lookerBaseUrl}/api/4.0/embed/cookieless_session/acquire`;
   const authHeaders = buildAuthorizationHeaderCandidates(lookerAuth);
@@ -404,6 +525,9 @@ async function acquireCookielessSession(
     force_logout_login: true,
     embed_domain: embedDomain,
   };
+  if (existingSessionReferenceToken) {
+    requestBody.session_reference_token = existingSessionReferenceToken;
+  }
 
   let lastFailure = {
     statusCode: 502,
@@ -432,11 +556,19 @@ async function acquireCookielessSession(
       payload && typeof payload.navigation_token === "string"
         ? payload.navigation_token
         : "";
+    const apiToken =
+      payload && typeof payload.api_token === "string" ? payload.api_token : "";
+    const sessionReferenceToken =
+      payload && typeof payload.session_reference_token === "string"
+        ? payload.session_reference_token
+        : "";
 
-    if (response.ok && authenticationToken && navigationToken) {
+    if (response.ok && authenticationToken && navigationToken && apiToken && sessionReferenceToken) {
       return {
         authenticationToken,
+        apiToken,
         navigationToken,
+        sessionReferenceToken,
       };
     }
 
@@ -445,6 +577,74 @@ async function acquireCookielessSession(
       message: !response.ok
         ? "Could not acquire a cookieless embed session."
         : "Looker cookieless response did not include required tokens.",
+      details: {
+        ...(extractLookerErrorDetails(payload) || {}),
+        auth_scheme: authorization.split(" ")[0],
+        status: response.status || undefined,
+      },
+    };
+  }
+
+  throw new ApiError(
+    502,
+    "LOOKER_EMBED_FAILED",
+    lastFailure.message,
+    lastFailure.details
+  );
+}
+
+async function generateCookielessTokens(
+  runtimeConfig,
+  lookerAuth,
+  session,
+  userAgent
+) {
+  const url = `${runtimeConfig.lookerBaseUrl}/api/4.0/embed/cookieless_session/generate_tokens`;
+  const authHeaders = buildAuthorizationHeaderCandidates(lookerAuth);
+  const requestBody = {
+    session_reference_token: session.sessionReferenceToken,
+    navigation_token: session.navigationToken,
+    api_token: session.apiToken,
+  };
+
+  let lastFailure = {
+    statusCode: 502,
+    message: "Could not refresh cookieless embed tokens.",
+    details: undefined,
+  };
+
+  for (const authorization of authHeaders) {
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        Authorization: authorization,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": userAgent,
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const payload = await readJsonSafely(response);
+    const apiToken =
+      payload && typeof payload.api_token === "string" ? payload.api_token : "";
+    const navigationToken =
+      payload && typeof payload.navigation_token === "string"
+        ? payload.navigation_token
+        : "";
+
+    if (response.ok && apiToken && navigationToken) {
+      return {
+        apiToken,
+        navigationToken,
+      };
+    }
+
+    lastFailure = {
+      statusCode: response.status || 502,
+      message: !response.ok
+        ? "Could not refresh cookieless embed tokens."
+        : "Looker did not return refreshed cookieless tokens.",
       details: {
         ...(extractLookerErrorDetails(payload) || {}),
         auth_scheme: authorization.split(" ")[0],

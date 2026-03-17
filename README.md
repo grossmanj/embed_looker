@@ -18,6 +18,7 @@ No Looker credentials are exposed to the browser.
 
 - `GET /healthz` -> `{"ok": true}`
 - `GET /api/embed-url/:dashboardId` -> `{"url":"<embed_login_url>","dashboardId":"<id>"}`
+- `GET /api/embed-tokens/:dashboardId` -> `{"api_token":"...","navigation_token":"..."}`
 
 `dashboardId` must be numeric.
 
