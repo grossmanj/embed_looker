@@ -10,6 +10,11 @@ const STATIC_LOOKER_SETTINGS = Object.freeze({
   lookerBaseUrl: "https://nordward.cloud.looker.com",
   embedPathPrefix: "/embed/dashboards",
   defaultDashboardId: "1327",
+  frameAncestors: [
+    "'self'",
+    "https://portal.mangodisplay.com",
+    "https://*.mangodisplay.com",
+  ],
   externalUserId: "public-dashboard-viewer",
   firstName: "Public",
   lastName: "Viewer",
@@ -29,6 +34,7 @@ const lookerOrigin = new URL(config.lookerBaseUrl).origin;
 app.use(
   helmet({
     crossOriginEmbedderPolicy: false,
+    frameguard: false,
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -39,7 +45,7 @@ app.use(
         frameSrc: ["'self'", lookerOrigin],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
-        frameAncestors: ["'self'"],
+        frameAncestors: config.frameAncestors,
       },
     },
   })
@@ -142,6 +148,9 @@ function loadConfig() {
 
   const lookerBaseUrl = normalizeLookerBaseUrl(STATIC_LOOKER_SETTINGS.lookerBaseUrl);
   const embedPathPrefix = normalizeEmbedPathPrefix(process.env.LOOKER_EMBED_PATH_PREFIX || STATIC_LOOKER_SETTINGS.embedPathPrefix);
+  const frameAncestors = process.env.FRAME_ANCESTORS
+    ? parseFrameAncestors(process.env.FRAME_ANCESTORS)
+    : [...STATIC_LOOKER_SETTINGS.frameAncestors];
   const defaultDashboardId = normalizeDashboardId(
     STATIC_LOOKER_SETTINGS.defaultDashboardId
   );
@@ -174,6 +183,7 @@ function loadConfig() {
     port,
     lookerBaseUrl,
     embedPathPrefix,
+    frameAncestors,
     defaultDashboardId,
     lookerClientId: process.env.LOOKER_CLIENT_ID,
     lookerClientSecret: process.env.LOOKER_CLIENT_SECRET,
@@ -187,6 +197,19 @@ function loadConfig() {
     sessionLength,
     embedUrlRateLimitMax,
   };
+}
+
+function parseFrameAncestors(value) {
+  const items = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (items.length === 0) {
+    failFast("FRAME_ANCESTORS must contain at least one value.");
+  }
+
+  return items;
 }
 
 function normalizeLookerBaseUrl(value) {

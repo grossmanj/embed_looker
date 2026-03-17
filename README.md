@@ -30,6 +30,7 @@ To keep configuration simple, non-sensitive values are static in
 - embed path prefix (`/embed/dashboards`)
 - default dashboard ID (`1327`)
 - embed user profile defaults (external user ID, first/last name)
+- frame ancestors allowlist includes Mango Display by default (`https://portal.mangodisplay.com`, `https://*.mangodisplay.com`)
 
 `LOOKER_MODELS` is intentionally environment-based because it must match your
 real Looker model names.
@@ -49,6 +50,7 @@ Optional:
 - `EMBED_URL_RATE_LIMIT_MAX` (default: `30` requests/minute)
 - `LOOKER_PERMISSIONS` (defaults to `see_looks,see_user_dashboards,access_data`)
 - `LOOKER_EMBED_PATH_PREFIX` (default: `/embed/dashboards`)
+- `FRAME_ANCESTORS` (comma-separated CSP `frame-ancestors`; defaults include Mango Display + `'self'`)
 - `LOOKER_GROUP_IDS` (comma-separated integer IDs)
 - `LOOKER_USER_ATTRIBUTES_JSON` (JSON object string)
 
