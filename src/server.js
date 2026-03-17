@@ -84,14 +84,16 @@ app.get("/healthz", (_req, res) => {
 app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) => {
   try {
     const dashboardId = req.params.dashboardId;
-    const targetUrlCandidates = buildEmbedTargetUrlCandidates(config, dashboardId);
+    const targetUrl = buildEmbedTargetUrl(config, dashboardId);
     const embedDomain = buildEmbedDomain(req);
+    const userAgent = req.get("user-agent") || "embed-looker-cloud-run";
     const lookerAuth = await getLookerAccessToken(config);
-    const signedUrl = await getSignedEmbedUrl(
+    const signedUrl = await getCookielessEmbedUrl(
       config,
       lookerAuth,
-      targetUrlCandidates,
-      embedDomain
+      targetUrl,
+      embedDomain,
+      userAgent
     );
 
     res.set("Cache-Control", "no-store");
@@ -290,26 +292,16 @@ function normalizeDashboardId(value) {
   return id;
 }
 
-function buildEmbedTargetUrlCandidates(runtimeConfig, dashboardId) {
+function buildEmbedTargetUrl(runtimeConfig, dashboardId) {
   const normalizedId = String(dashboardId || "").trim();
   if (!/^\d+$/.test(normalizedId)) {
     throw new ApiError(400, "INVALID_DASHBOARD_ID", "Dashboard ID must be numeric.");
   }
 
-  const candidates = [];
-  const seen = new Set();
-
-  function addPath(pathCandidate) {
-    const targetUrl = new URL(pathCandidate, runtimeConfig.lookerBaseUrl).toString();
-    if (!seen.has(targetUrl)) {
-      seen.add(targetUrl);
-      candidates.push(targetUrl);
-    }
-  }
-
-  addPath(`${runtimeConfig.embedPathPrefix}/${normalizedId}`);
-
-  return candidates;
+  return new URL(
+    `${runtimeConfig.embedPathPrefix}/${normalizedId}`,
+    runtimeConfig.lookerBaseUrl
+  );
 }
 
 function buildEmbedDomain(req) {
@@ -368,66 +360,97 @@ async function getLookerAccessToken(runtimeConfig) {
   };
 }
 
-async function getSignedEmbedUrl(
+async function getCookielessEmbedUrl(
   runtimeConfig,
   lookerAuth,
-  targetUrlCandidates,
-  embedDomain
+  targetUrl,
+  embedDomain,
+  userAgent
 ) {
-  const url = `${runtimeConfig.lookerBaseUrl}/api/4.0/embed/sso_url`;
+  const tokens = await acquireCookielessSession(
+    runtimeConfig,
+    lookerAuth,
+    embedDomain,
+    userAgent
+  );
+
+  targetUrl.searchParams.set("embed_domain", embedDomain);
+  targetUrl.searchParams.set("embed_navigation_token", tokens.navigationToken);
+
+  const targetUri = encodeURIComponent(
+    `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`
+  );
+
+  return `${targetUrl.origin}/login/embed/${targetUri}?embed_authentication_token=${encodeURIComponent(tokens.authenticationToken)}`;
+}
+
+async function acquireCookielessSession(
+  runtimeConfig,
+  lookerAuth,
+  embedDomain,
+  userAgent
+) {
+  const url = `${runtimeConfig.lookerBaseUrl}/api/4.0/embed/cookieless_session/acquire`;
   const authHeaders = buildAuthorizationHeaderCandidates(lookerAuth);
+  const requestBody = {
+    session_length: runtimeConfig.sessionLength,
+    external_user_id: runtimeConfig.externalUserId,
+    first_name: runtimeConfig.firstName,
+    last_name: runtimeConfig.lastName,
+    permissions: runtimeConfig.permissions,
+    models: runtimeConfig.models,
+    group_ids: runtimeConfig.groupIds,
+    user_attributes: runtimeConfig.userAttributes,
+    force_logout_login: true,
+    embed_domain: embedDomain,
+  };
 
   let lastFailure = {
     statusCode: 502,
-    message: "Could not generate a signed embed URL.",
+    message: "Could not acquire a cookieless embed session.",
     details: undefined,
   };
 
-  for (const targetUrl of targetUrlCandidates) {
-    const requestBody = {
-      target_url: targetUrl,
-      session_length: runtimeConfig.sessionLength,
-      external_user_id: runtimeConfig.externalUserId,
-      first_name: runtimeConfig.firstName,
-      last_name: runtimeConfig.lastName,
-      permissions: runtimeConfig.permissions,
-      models: runtimeConfig.models,
-      group_ids: runtimeConfig.groupIds,
-      user_attributes: runtimeConfig.userAttributes,
-      force_logout_login: true,
-      embed_domain: embedDomain,
-    };
+  for (const authorization of authHeaders) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: authorization,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": userAgent,
+      },
+      body: JSON.stringify(requestBody),
+    });
 
-    for (const authorization of authHeaders) {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: authorization,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(requestBody),
-      });
+    const payload = await readJsonSafely(response);
+    const authenticationToken =
+      payload && typeof payload.authentication_token === "string"
+        ? payload.authentication_token
+        : "";
+    const navigationToken =
+      payload && typeof payload.navigation_token === "string"
+        ? payload.navigation_token
+        : "";
 
-      const payload = await readJsonSafely(response);
-      const signedUrl = payload && (payload.url || payload.sso_url);
-      if (response.ok && signedUrl) {
-        return signedUrl;
-      }
-
-      lastFailure = {
-        statusCode: response.status || 502,
-        message: !response.ok
-          ? "Could not generate a signed embed URL."
-          : "Looker response did not include a signed embed URL.",
-        details: {
-          ...(extractLookerErrorDetails(payload) || {}),
-          target_url: targetUrl,
-          auth_scheme: authorization.split(" ")[0],
-          status: response.status || undefined,
-        },
+    if (response.ok && authenticationToken && navigationToken) {
+      return {
+        authenticationToken,
+        navigationToken,
       };
     }
+
+    lastFailure = {
+      statusCode: response.status || 502,
+      message: !response.ok
+        ? "Could not acquire a cookieless embed session."
+        : "Looker cookieless response did not include required tokens.",
+      details: {
+        ...(extractLookerErrorDetails(payload) || {}),
+        auth_scheme: authorization.split(" ")[0],
+        status: response.status || undefined,
+      },
+    };
   }
 
   throw new ApiError(

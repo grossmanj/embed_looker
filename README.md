@@ -1,6 +1,6 @@
 # embed-looker-cloud-run
 
-Production-ready Node.js 20 + Express app that embeds Looker dashboards on Google Cloud Run using server-side signed URLs.
+Production-ready Node.js 20 + Express app that embeds Looker dashboards on Google Cloud Run using server-side cookieless embed tokens.
 
 ## URL behavior
 
@@ -17,7 +17,7 @@ No Looker credentials are exposed to the browser.
 ## API endpoints
 
 - `GET /healthz` -> `{"ok": true}`
-- `GET /api/embed-url/:dashboardId` -> `{"url":"<signed_url>","dashboardId":"<id>"}`
+- `GET /api/embed-url/:dashboardId` -> `{"url":"<embed_login_url>","dashboardId":"<id>"}`
 
 `dashboardId` must be numeric.
 
@@ -121,7 +121,7 @@ If Cloud Run logs show `LOOKER_EMBED_FAILED`, the most common cause is a model/p
 - For production, store secrets in Google Secret Manager and inject them into Cloud Run.
 - Use `.env` only for local development.
 - Add your public Cloud Run domain to the Looker embed allowlist if required by your Looker instance.
-- Signed iframe embedding depends on browser cookie policy; strict third-party-cookie blocking (common in incognito) can still break authentication unless you allow third-party cookies for your Looker domain or move to Looker cookieless embed.
+- This app uses Looker cookieless embed flow to reduce dependence on third-party cookies in locked-down kiosk/signage environments.
 
 ## How to use my rotated Looker service account credentials
 
