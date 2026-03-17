@@ -8,7 +8,7 @@ const rateLimit = require("express-rate-limit");
 // Keep non-sensitive embed settings static in code to reduce env complexity.
 const STATIC_LOOKER_SETTINGS = Object.freeze({
   lookerBaseUrl: "https://nordward.cloud.looker.com",
-  embedPathPrefix: "/dashboards",
+  embedPathPrefix: "/embed/dashboards",
   defaultDashboardId: "1327",
   externalUserId: "public-dashboard-viewer",
   firstName: "Public",
@@ -79,13 +79,16 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
   try {
     const dashboardId = req.params.dashboardId;
     const targetUrlCandidates = buildEmbedTargetUrlCandidates(config, dashboardId);
+    const embedDomain = buildEmbedDomain(req);
     const lookerAuth = await getLookerAccessToken(config);
     const signedUrl = await getSignedEmbedUrl(
       config,
       lookerAuth,
-      targetUrlCandidates
+      targetUrlCandidates,
+      embedDomain
     );
 
+    res.set("Cache-Control", "no-store");
     res.status(200).json({ url: signedUrl, dashboardId });
   } catch (error) {
     const publicError = toPublicError(error);
@@ -282,10 +285,23 @@ function buildEmbedTargetUrlCandidates(runtimeConfig, dashboardId) {
   }
 
   addPath(`${runtimeConfig.embedPathPrefix}/${normalizedId}`);
-  addPath(`/dashboards/${normalizedId}`);
-  addPath(`/embed/dashboards/${normalizedId}`);
 
   return candidates;
+}
+
+function buildEmbedDomain(req) {
+  const protocol = req.protocol || "https";
+  const host = req.get("host");
+
+  if (!host) {
+    throw new ApiError(500, "INVALID_EMBED_DOMAIN", "Could not resolve embed domain.");
+  }
+
+  try {
+    return new URL(`${protocol}://${host}`).origin;
+  } catch (_error) {
+    throw new ApiError(500, "INVALID_EMBED_DOMAIN", "Could not resolve embed domain.");
+  }
 }
 
 async function getLookerAccessToken(runtimeConfig) {
@@ -329,7 +345,12 @@ async function getLookerAccessToken(runtimeConfig) {
   };
 }
 
-async function getSignedEmbedUrl(runtimeConfig, lookerAuth, targetUrlCandidates) {
+async function getSignedEmbedUrl(
+  runtimeConfig,
+  lookerAuth,
+  targetUrlCandidates,
+  embedDomain
+) {
   const url = `${runtimeConfig.lookerBaseUrl}/api/4.0/embed/sso_url`;
   const authHeaders = buildAuthorizationHeaderCandidates(lookerAuth);
 
@@ -351,6 +372,7 @@ async function getSignedEmbedUrl(runtimeConfig, lookerAuth, targetUrlCandidates)
       group_ids: runtimeConfig.groupIds,
       user_attributes: runtimeConfig.userAttributes,
       force_logout_login: true,
+      embed_domain: embedDomain,
     };
 
     for (const authorization of authHeaders) {
