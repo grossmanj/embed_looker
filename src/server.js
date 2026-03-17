@@ -75,6 +75,21 @@ const embedUrlLimiter = rateLimit({
   },
 });
 
+const embedTokensLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: config.embedTokenRateLimitMax,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    res.status(429).json({
+      error: {
+        code: "RATE_LIMITED",
+        message: "Too many token refresh requests. Please retry shortly.",
+      },
+    });
+  },
+});
+
 const publicDir = path.join(__dirname, "..", "public");
 app.use(express.static(publicDir, { index: false }));
 
@@ -96,7 +111,11 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
     const targetUrl = buildEmbedTargetUrl(config, dashboardId);
     const embedDomain = buildEmbedDomain(req);
     const userAgent = req.get("user-agent") || "embed-looker-cloud-run";
-    const clientSessionKey = buildCookielessClientSessionKey(req, dashboardId);
+    const clientSessionId = resolveClientSessionId(req);
+    const clientSessionKey = buildCookielessClientSessionKey(
+      dashboardId,
+      clientSessionId
+    );
     const priorSession = getCookielessSession(clientSessionKey);
     const lookerAuth = await getLookerAccessToken(config);
     const embedResult = await getCookielessEmbedUrl(
@@ -113,6 +132,9 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
       sessionReferenceToken: embedResult.sessionReferenceToken,
       apiToken: embedResult.apiToken,
       navigationToken: embedResult.navigationToken,
+      apiTokenTtl: embedResult.apiTokenTtl,
+      navigationTokenTtl: embedResult.navigationTokenTtl,
+      sessionReferenceTokenTtl: embedResult.sessionReferenceTokenTtl,
       expiresAt: Date.now() + COOKILESS_SESSION_TTL_MS,
       updatedAt: Date.now(),
     });
@@ -140,11 +162,15 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
 
 app.get(
   "/api/embed-tokens/:dashboardId(\\d+)",
-  embedUrlLimiter,
+  embedTokensLimiter,
   async (req, res) => {
     try {
       const dashboardId = req.params.dashboardId;
-      const clientSessionKey = buildCookielessClientSessionKey(req, dashboardId);
+      const clientSessionId = resolveClientSessionId(req);
+      const clientSessionKey = buildCookielessClientSessionKey(
+        dashboardId,
+        clientSessionId
+      );
       const session = getCookielessSession(clientSessionKey);
 
       if (!session || session.dashboardId !== dashboardId) {
@@ -168,6 +194,9 @@ app.get(
         ...session,
         apiToken: tokens.apiToken,
         navigationToken: tokens.navigationToken,
+        apiTokenTtl: tokens.apiTokenTtl,
+        navigationTokenTtl: tokens.navigationTokenTtl,
+        sessionReferenceTokenTtl: tokens.sessionReferenceTokenTtl,
         expiresAt: Date.now() + COOKILESS_SESSION_TTL_MS,
         updatedAt: Date.now(),
       });
@@ -176,6 +205,9 @@ app.get(
       res.status(200).json({
         api_token: tokens.apiToken,
         navigation_token: tokens.navigationToken,
+        api_token_ttl: tokens.apiTokenTtl,
+        navigation_token_ttl: tokens.navigationTokenTtl,
+        session_reference_token_ttl: tokens.sessionReferenceTokenTtl,
       });
     } catch (error) {
       const publicError = toPublicError(error);
@@ -259,6 +291,10 @@ function loadConfig() {
     process.env.EMBED_URL_RATE_LIMIT_MAX || "30",
     "EMBED_URL_RATE_LIMIT_MAX"
   );
+  const embedTokenRateLimitMax = parsePositiveInt(
+    process.env.EMBED_TOKEN_RATE_LIMIT_MAX || "300",
+    "EMBED_TOKEN_RATE_LIMIT_MAX"
+  );
   const port = parsePositiveInt(process.env.PORT || "8080", "PORT");
 
   return {
@@ -278,6 +314,7 @@ function loadConfig() {
     userAttributes,
     sessionLength,
     embedUrlRateLimitMax,
+    embedTokenRateLimitMax,
   };
 }
 
@@ -364,6 +401,14 @@ function parsePositiveInt(raw, envName) {
   return parsed;
 }
 
+function parseNonNegativeInt(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return 0;
+  }
+  return parsed;
+}
+
 function normalizeDashboardId(value) {
   const id = String(value || "").trim();
   if (!/^\d+$/.test(id)) {
@@ -399,10 +444,29 @@ function buildEmbedDomain(req) {
   }
 }
 
-function buildCookielessClientSessionKey(req, dashboardId) {
-  const ip = req.ip || req.get("x-forwarded-for") || "unknown-ip";
-  const userAgent = req.get("user-agent") || "unknown-ua";
-  return `${dashboardId}|${ip}|${userAgent}`;
+function resolveClientSessionId(req) {
+  const raw = String(req.query.clientSessionId || "").trim();
+  if (!raw) {
+    throw new ApiError(
+      400,
+      "INVALID_CLIENT_SESSION",
+      "Missing clientSessionId query parameter."
+    );
+  }
+
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(raw)) {
+    throw new ApiError(
+      400,
+      "INVALID_CLIENT_SESSION",
+      "clientSessionId must be 16-128 chars using letters, numbers, '_' or '-'."
+    );
+  }
+
+  return raw;
+}
+
+function buildCookielessClientSessionKey(dashboardId, clientSessionId) {
+  return `${dashboardId}|${clientSessionId}`;
 }
 
 function getCookielessSession(sessionKey) {
@@ -501,6 +565,9 @@ async function getCookielessEmbedUrl(
     sessionReferenceToken: tokens.sessionReferenceToken,
     apiToken: tokens.apiToken,
     navigationToken: tokens.navigationToken,
+    apiTokenTtl: tokens.apiTokenTtl,
+    navigationTokenTtl: tokens.navigationTokenTtl,
+    sessionReferenceTokenTtl: tokens.sessionReferenceTokenTtl,
   };
 }
 
@@ -562,13 +629,28 @@ async function acquireCookielessSession(
       payload && typeof payload.session_reference_token === "string"
         ? payload.session_reference_token
         : "";
+    const apiTokenTtl =
+      payload ? parseNonNegativeInt(payload.api_token_ttl) : 0;
+    const navigationTokenTtl =
+      payload ? parseNonNegativeInt(payload.navigation_token_ttl) : 0;
+    const sessionReferenceTokenTtl =
+      payload ? parseNonNegativeInt(payload.session_reference_token_ttl) : 0;
 
-    if (response.ok && authenticationToken && navigationToken && apiToken && sessionReferenceToken) {
+    if (
+      response.ok &&
+      authenticationToken &&
+      navigationToken &&
+      apiToken &&
+      sessionReferenceToken
+    ) {
       return {
         authenticationToken,
         apiToken,
         navigationToken,
         sessionReferenceToken,
+        apiTokenTtl,
+        navigationTokenTtl,
+        sessionReferenceTokenTtl,
       };
     }
 
@@ -632,11 +714,20 @@ async function generateCookielessTokens(
       payload && typeof payload.navigation_token === "string"
         ? payload.navigation_token
         : "";
+    const apiTokenTtl =
+      payload ? parseNonNegativeInt(payload.api_token_ttl) : 0;
+    const navigationTokenTtl =
+      payload ? parseNonNegativeInt(payload.navigation_token_ttl) : 0;
+    const sessionReferenceTokenTtl =
+      payload ? parseNonNegativeInt(payload.session_reference_token_ttl) : 0;
 
     if (response.ok && apiToken && navigationToken) {
       return {
         apiToken,
         navigationToken,
+        apiTokenTtl,
+        navigationTokenTtl,
+        sessionReferenceTokenTtl,
       };
     }
 

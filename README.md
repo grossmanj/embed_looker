@@ -49,6 +49,7 @@ Optional:
 - `PORT` (default: `8080`)
 - `LOOKER_SESSION_LENGTH` (default: `3600`)
 - `EMBED_URL_RATE_LIMIT_MAX` (default: `30` requests/minute)
+- `EMBED_TOKEN_RATE_LIMIT_MAX` (default: `300` requests/minute)
 - `LOOKER_PERMISSIONS` (defaults to `see_looks,see_user_dashboards,access_data`)
 - `LOOKER_EMBED_PATH_PREFIX` (default: `/embed/dashboards`)
 - `FRAME_ANCESTORS` (comma-separated CSP `frame-ancestors`; defaults include Mango Display + `'self'`)

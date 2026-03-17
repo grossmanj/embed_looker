@@ -13,6 +13,7 @@
   const retryButton = document.getElementById("retry-btn");
 
   const dashboardId = getDashboardIdFromPath();
+  const clientSessionId = createClientSessionId();
 
   let loadInFlight = false;
   let hasLoadedAtLeastOnce = false;
@@ -57,19 +58,11 @@
     }
 
     const payload = parseMessagePayload(event.data);
-    if (
-      !payload ||
-      !(
-        payload.type === "session:tokens:request" ||
-        payload.type === "session:tokens"
-      ) ||
-      payload.api_token ||
-      payload.navigation_token
-    ) {
+    if (!payload || payload.type !== "session:tokens:request") {
       return;
     }
 
-    void sendCookielessTokens();
+    void sendCookielessTokens(payload, event.origin);
   });
 
   setInterval(() => {
@@ -110,7 +103,7 @@
     hideError();
 
     try {
-      const response = await fetch(`/api/embed-url/${dashboardId}`, {
+      const response = await fetch(getApiUrl("/api/embed-url"), {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -159,7 +152,7 @@
     void loadDashboard({ interactive: false, force: true });
   }
 
-  async function sendCookielessTokens() {
+  async function sendCookielessTokens(requestMessage, targetOrigin) {
     if (tokenRequestInFlight) {
       return;
     }
@@ -167,7 +160,7 @@
     tokenRequestInFlight = true;
 
     try {
-      const response = await fetch(`/api/embed-tokens/${dashboardId}`, {
+      const response = await fetch(getApiUrl("/api/embed-tokens"), {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -183,13 +176,32 @@
         return;
       }
 
+      const message = {
+        type: "session:tokens",
+        api_token: payload.api_token,
+        navigation_token: payload.navigation_token,
+      };
+      if (typeof payload.api_token_ttl === "number") {
+        message.api_token_ttl = payload.api_token_ttl;
+      }
+      if (typeof payload.navigation_token_ttl === "number") {
+        message.navigation_token_ttl = payload.navigation_token_ttl;
+      }
+      if (typeof payload.session_reference_token_ttl === "number") {
+        message.session_reference_token_ttl = payload.session_reference_token_ttl;
+      }
+      if (
+        requestMessage &&
+        Object.prototype.hasOwnProperty.call(requestMessage, "request_id")
+      ) {
+        message.request_id = requestMessage.request_id;
+      }
+
+      const postOrigin =
+        targetOrigin && targetOrigin !== "null" ? targetOrigin : lookerOrigin;
       iframe.contentWindow.postMessage(
-        {
-          type: "session:tokens",
-          api_token: payload.api_token,
-          navigation_token: payload.navigation_token,
-        },
-        lookerOrigin
+        JSON.stringify(message),
+        postOrigin
       );
     } catch (_error) {
       void loadDashboard({ interactive: false, force: true });
@@ -235,6 +247,27 @@
     }
   }
 
+  function getApiUrl(basePath) {
+    const safeBase = String(basePath || "").replace(/\/+$/, "");
+    return `${safeBase}/${dashboardId}?clientSessionId=${encodeURIComponent(
+      clientSessionId
+    )}`;
+  }
+
+  function createClientSessionId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+
+    const alphabet =
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-";
+    let id = "";
+    for (let i = 0; i < 32; i += 1) {
+      id += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return id;
+  }
+
   function parseMessagePayload(value) {
     if (value && typeof value === "object") {
       return value;
@@ -244,8 +277,16 @@
       return null;
     }
 
+    if (value === "session:tokens:request") {
+      return { type: value };
+    }
+
     try {
-      return JSON.parse(value);
+      const parsed = JSON.parse(value);
+      if (typeof parsed === "string") {
+        return parseMessagePayload(parsed);
+      }
+      return parsed;
     } catch (_error) {
       return null;
     }
