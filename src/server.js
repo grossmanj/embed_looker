@@ -55,6 +55,8 @@ if (typeof cookielessCleanupTimer.unref === "function") {
 app.use(
   helmet({
     crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: false,
     frameguard: false,
     contentSecurityPolicy: {
       directives: {
