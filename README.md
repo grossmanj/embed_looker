@@ -17,7 +17,7 @@ No Looker credentials are exposed to the browser.
 ## API endpoints
 
 - `GET /healthz` -> `{"ok": true}`
-- `GET /api/embed-url/:dashboardId` -> `{"url":"<embed_login_url>","dashboardId":"<id>"}`
+- `GET /api/embed-url/:dashboardId` -> `{"url":"<embed_login_url>","dashboardId":"<id>","clientSessionId":"<id>"}` (`clientSessionId` is auto-generated for manual testing if omitted)
 - `GET /api/embed-tokens/:dashboardId` -> `{"api_token":"...","navigation_token":"..."}`
 
 `dashboardId` must be numeric.
@@ -33,7 +33,8 @@ To keep configuration simple, non-sensitive values are static in
 - embed user profile defaults (external user ID, first/last name)
 - default embedded permissions include folder browsing and dashboard access
 - default embedded models include both `kvalitetsfisk` and `fsgdk`
-- frame ancestors allowlist includes Mango Display by default (`https://portal.mangodisplay.com`, `https://*.mangodisplay.com`)
+- `fsgdk` dashboards automatically add the FSG Sales group (`29`) to the embed session
+- frame ancestors allowlist includes Mango domains by default (`https://portal.mangodisplay.com`, `https://*.mangodisplay.com`, `https://app.mangosigns.com`, `https://*.mangosigns.com`)
 
 Environment-provided `LOOKER_MODELS` and `LOOKER_PERMISSIONS` extend these defaults instead of replacing them.
 
@@ -125,6 +126,7 @@ If Cloud Run logs show `LOOKER_EMBED_FAILED`, the most common cause is a model/p
 - Use `.env` only for local development.
 - Add your public Cloud Run domain to the Looker embed allowlist if required by your Looker instance.
 - This app uses Looker cookieless embed flow to reduce dependence on third-party cookies in locked-down kiosk/signage environments.
+- If Mango rejects the page as non-embeddable, verify the Mango embed host is covered by `FRAME_ANCESTORS`; some Mango environments use `app.mangosigns.com` rather than `portal.mangodisplay.com`.
 
 ## How to use my rotated Looker service account credentials
 

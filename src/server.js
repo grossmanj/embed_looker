@@ -1,5 +1,6 @@
 require("dotenv").config();
 
+const crypto = require("crypto");
 const path = require("path");
 const express = require("express");
 const helmet = require("helmet");
@@ -14,6 +15,8 @@ const STATIC_LOOKER_SETTINGS = Object.freeze({
     "'self'",
     "https://portal.mangodisplay.com",
     "https://*.mangodisplay.com",
+    "https://app.mangosigns.com",
+    "https://*.mangosigns.com",
   ],
   externalUserId: "public-dashboard-viewer",
   firstName: "Public",
@@ -26,6 +29,9 @@ const STATIC_LOOKER_SETTINGS = Object.freeze({
     "embed_browse_spaces",
   ],
   models: ["kvalitetsfisk", "fsgdk"],
+  groupIdsByModel: {
+    fsgdk: [29],
+  },
   groupIds: [],
   userAttributes: {},
 });
@@ -117,15 +123,23 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
     const targetUrl = buildEmbedTargetUrl(config, dashboardId);
     const embedDomain = buildEmbedDomain(req);
     const userAgent = req.get("user-agent") || "embed-looker-cloud-run";
-    const clientSessionId = resolveClientSessionId(req);
+    const clientSessionId = resolveClientSessionId(req, {
+      allowGenerated: true,
+    });
     const clientSessionKey = buildCookielessClientSessionKey(
       dashboardId,
       clientSessionId
     );
     const priorSession = getCookielessSession(clientSessionKey);
     const lookerAuth = await getLookerAccessToken(config);
-    const embedResult = await getCookielessEmbedUrl(
+    const dashboardContext = await getDashboardContext(
       config,
+      lookerAuth,
+      dashboardId
+    );
+    const embedAccessConfig = buildEmbedAccessConfig(config, dashboardContext);
+    const embedResult = await getCookielessEmbedUrl(
+      embedAccessConfig,
       lookerAuth,
       targetUrl,
       embedDomain,
@@ -146,7 +160,11 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
     });
 
     res.set("Cache-Control", "no-store");
-    res.status(200).json({ url: embedResult.url, dashboardId });
+    res.status(200).json({
+      url: embedResult.url,
+      dashboardId,
+      clientSessionId,
+    });
   } catch (error) {
     const publicError = toPublicError(error);
 
@@ -309,6 +327,7 @@ function loadConfig() {
     lookerBaseUrl,
     embedPathPrefix,
     frameAncestors,
+    groupIdsByModel: STATIC_LOOKER_SETTINGS.groupIdsByModel,
     defaultDashboardId,
     lookerClientId: process.env.LOOKER_CLIENT_ID,
     lookerClientSecret: process.env.LOOKER_CLIENT_SECRET,
@@ -404,6 +423,16 @@ function parseGroupIds(value) {
     });
 }
 
+function mergeIntegerLists(...lists) {
+  const merged = new Set();
+  for (const list of lists) {
+    for (const item of list || []) {
+      merged.add(item);
+    }
+  }
+  return Array.from(merged);
+}
+
 function parseUserAttributes(value) {
   try {
     const parsed = JSON.parse(value);
@@ -467,8 +496,12 @@ function buildEmbedDomain(req) {
   }
 }
 
-function resolveClientSessionId(req) {
+function resolveClientSessionId(req, options = {}) {
   const raw = String(req.query.clientSessionId || "").trim();
+  if (!raw && options.allowGenerated) {
+    return `generated_${crypto.randomUUID().replace(/-/g, "")}`;
+  }
+
   if (!raw) {
     throw new ApiError(
       400,
@@ -557,6 +590,76 @@ async function getLookerAccessToken(runtimeConfig) {
   return {
     accessToken: payload.access_token,
     tokenType: normalizeAuthTokenType(payload.token_type),
+  };
+}
+
+async function getDashboardContext(runtimeConfig, lookerAuth, dashboardId) {
+  const url = `${runtimeConfig.lookerBaseUrl}/api/4.0/dashboards/${dashboardId}?fields=id,title,dashboard_elements(query(model))`;
+  const authHeaders = buildAuthorizationHeaderCandidates(lookerAuth);
+
+  let lastFailure;
+
+  for (const authorization of authHeaders) {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: authorization,
+        Accept: "application/json",
+      },
+    });
+
+    const payload = await readJsonSafely(response);
+
+    if (response.ok && payload && typeof payload.id === "string") {
+      const models = Array.from(
+        new Set(
+          (payload.dashboard_elements || [])
+            .map((element) => element?.query?.model)
+            .filter((model) => typeof model === "string" && model.trim() !== "")
+        )
+      );
+
+      return {
+        id: payload.id,
+        title: payload.title || dashboardId,
+        models,
+      };
+    }
+
+    lastFailure = {
+      statusCode: response.status || 502,
+      details: {
+        ...(extractLookerErrorDetails(payload) || {}),
+        dashboard_id: dashboardId,
+        auth_scheme: authorization.split(" ")[0],
+        status: response.status || undefined,
+      },
+    };
+  }
+
+  throw new ApiError(
+    502,
+    "LOOKER_DASHBOARD_FAILED",
+    "Could not inspect the requested dashboard.",
+    lastFailure?.details
+  );
+}
+
+function buildEmbedAccessConfig(runtimeConfig, dashboardContext) {
+  const dashboardModels = dashboardContext.models || [];
+  const extraGroupIds = [];
+
+  for (const model of dashboardModels) {
+    const mappedGroups = runtimeConfig.groupIdsByModel[model];
+    if (Array.isArray(mappedGroups)) {
+      extraGroupIds.push(...mappedGroups);
+    }
+  }
+
+  return {
+    ...runtimeConfig,
+    models: mergeCsvConfig(runtimeConfig.models, dashboardModels.join(","), "LOOKER_MODELS"),
+    groupIds: mergeIntegerLists(runtimeConfig.groupIds, extraGroupIds),
   };
 }
 
