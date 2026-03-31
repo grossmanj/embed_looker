@@ -18,8 +18,14 @@ const STATIC_LOOKER_SETTINGS = Object.freeze({
   externalUserId: "public-dashboard-viewer",
   firstName: "Public",
   lastName: "Viewer",
-  permissions: ["see_looks", "see_user_dashboards", "access_data"],
-  models: [],
+  permissions: [
+    "see_looks",
+    "see_user_dashboards",
+    "see_lookml_dashboards",
+    "access_data",
+    "embed_browse_spaces",
+  ],
+  models: ["kvalitetsfisk", "fsgdk"],
   groupIds: [],
   userAttributes: {},
 });
@@ -250,7 +256,7 @@ process.on("SIGTERM", () => {
 });
 
 function loadConfig() {
-  const missing = ["LOOKER_CLIENT_ID", "LOOKER_CLIENT_SECRET", "LOOKER_MODELS"].filter(
+  const missing = ["LOOKER_CLIENT_ID", "LOOKER_CLIENT_SECRET"].filter(
     (key) => !process.env[key] || process.env[key].trim() === ""
   );
 
@@ -268,13 +274,14 @@ function loadConfig() {
   const defaultDashboardId = normalizeDashboardId(
     STATIC_LOOKER_SETTINGS.defaultDashboardId
   );
-  const permissions = parseCsvString(
-    process.env.LOOKER_PERMISSIONS ||
-      STATIC_LOOKER_SETTINGS.permissions.join(","),
+  const permissions = mergeCsvConfig(
+    STATIC_LOOKER_SETTINGS.permissions,
+    process.env.LOOKER_PERMISSIONS,
     "LOOKER_PERMISSIONS"
   );
-  const models = parseCsvString(
-    process.env.LOOKER_MODELS || STATIC_LOOKER_SETTINGS.models.join(","),
+  const models = mergeCsvConfig(
+    STATIC_LOOKER_SETTINGS.models,
+    process.env.LOOKER_MODELS,
     "LOOKER_MODELS"
   );
   const groupIds = process.env.LOOKER_GROUP_IDS
@@ -361,6 +368,22 @@ function parseCsvString(value, envName) {
   }
 
   return items;
+}
+
+function mergeCsvConfig(defaultItems, envValue, envName) {
+  const merged = new Set(defaultItems);
+
+  if (typeof envValue === "string" && envValue.trim() !== "") {
+    for (const item of parseCsvString(envValue, envName)) {
+      merged.add(item);
+    }
+  }
+
+  if (merged.size === 0) {
+    failFast(`${envName} must contain at least one value.`);
+  }
+
+  return Array.from(merged);
 }
 
 function parseGroupIds(value) {
