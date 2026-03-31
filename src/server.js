@@ -684,12 +684,10 @@ async function getCookielessEmbedUrl(
   targetUrl.searchParams.set("embed_domain", embedDomain);
   targetUrl.searchParams.set("embed_navigation_token", tokens.navigationToken);
 
-  const targetUri = encodeURIComponent(
-    `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`
-  );
-
   return {
-    url: `${targetUrl.origin}/login/embed/${targetUri}?embed_authentication_token=${encodeURIComponent(tokens.authenticationToken)}`,
+    // Return the direct cookieless embed URL to avoid the /login/embed redirect,
+    // which sends X-Frame-Options: SAMEORIGIN and can confuse kiosk validators.
+    url: targetUrl.toString(),
     sessionReferenceToken: tokens.sessionReferenceToken,
     apiToken: tokens.apiToken,
     navigationToken: tokens.navigationToken,
