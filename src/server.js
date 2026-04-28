@@ -13,6 +13,7 @@ const STATIC_LOOKER_SETTINGS = Object.freeze({
   defaultDashboardId: "1327",
   frameAncestors: [
     "'self'",
+    "https://app.mangodisplay.com",
     "https://portal.mangodisplay.com",
     "https://*.mangodisplay.com",
     "https://app.mangosigns.com",

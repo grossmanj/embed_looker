@@ -34,7 +34,7 @@ To keep configuration simple, non-sensitive values are static in
 - default embedded permissions include folder browsing and dashboard access
 - default embedded models include both `kvalitetsfisk` and `fsgdk`
 - `fsgdk` dashboards automatically add the FSG Sales group (`29`) to the embed session
-- frame ancestors allowlist includes Mango domains by default (`https://portal.mangodisplay.com`, `https://*.mangodisplay.com`, `https://app.mangosigns.com`, `https://*.mangosigns.com`)
+- frame ancestors allowlist includes Mango domains by default (`https://app.mangodisplay.com`, `https://portal.mangodisplay.com`, `https://*.mangodisplay.com`, `https://app.mangosigns.com`, `https://*.mangosigns.com`)
 
 Environment-provided `LOOKER_MODELS` and `LOOKER_PERMISSIONS` extend these defaults instead of replacing them.
 
