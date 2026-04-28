@@ -32,6 +32,7 @@
   let lastResumeRefreshAt = 0;
   let loadTimeout = null;
   let healthTimer = null;
+  let dashboardLoadArmed = false;
   let scrollAnimationFrame = null;
   let scrollDirection = 1;
   let scrollPauseUntil = 0;
@@ -47,6 +48,11 @@
   statusPanel.hidden = !debugEnabled;
 
   iframe.addEventListener("load", () => {
+    if (!dashboardLoadArmed || !isRealIframeSrc(iframe.src)) {
+      return;
+    }
+
+    dashboardLoadArmed = false;
     clearLoadTimeout();
     hideError();
     setLoading(false);
@@ -218,9 +224,11 @@
 
       lookerOrigin = getOrigin(payload.url);
       armLoadTimeout();
-      iframe.src = payload.url;
       iframe.hidden = false;
+      dashboardLoadArmed = true;
+      iframe.src = payload.url;
     } catch (error) {
+      dashboardLoadArmed = false;
       clearLoadTimeout();
       if (hasLoadedAtLeastOnce && !interactive) {
         setLoading(false);
@@ -364,6 +372,7 @@
     clearLoadTimeout();
     loadTimeout = setTimeout(() => {
       loadTimeout = null;
+      dashboardLoadArmed = false;
       if (!hasLoadedAtLeastOnce) {
         showError("Dashboard load timed out.");
         setLoading(false);
@@ -527,6 +536,10 @@
     } catch (_error) {
       return null;
     }
+  }
+
+  function isRealIframeSrc(value) {
+    return Boolean(value && value !== "about:blank");
   }
 
   function getApiUrl(basePath, dashboardRef) {
