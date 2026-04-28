@@ -484,18 +484,18 @@
         scrollDirection;
       const nextScrollTop = viewport.scrollTop + delta;
 
-      if (nextScrollTop >= maxScroll) {
+      if (scrollDirection > 0 && nextScrollTop >= maxScroll) {
         viewport.scrollTop = maxScroll;
         scrollDirection = -1;
         scrollPauseUntil = now + kioskConfig.autoScroll.pauseMs;
         lastScrollFrameAt = 0;
-      } else if (nextScrollTop <= 0) {
+      } else if (scrollDirection < 0 && nextScrollTop <= 0) {
         viewport.scrollTop = 0;
         scrollDirection = 1;
         scrollPauseUntil = now + kioskConfig.autoScroll.pauseMs;
         lastScrollFrameAt = 0;
       } else {
-        viewport.scrollTop = nextScrollTop;
+        viewport.scrollTop = Math.min(Math.max(nextScrollTop, 0), maxScroll);
         lastScrollFrameAt = timestamp;
       }
     } else {
