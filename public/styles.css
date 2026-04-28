@@ -96,3 +96,22 @@ body {
 #retry-btn:hover {
   background: #f8fafc;
 }
+
+.kiosk-status {
+  position: absolute;
+  left: max(0.75rem, env(safe-area-inset-left));
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  z-index: 7;
+  max-width: min(720px, calc(100% - 1.5rem));
+  padding: 0.45rem 0.65rem;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #cbd5e1;
+  font: 600 0.78rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.kiosk-status p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

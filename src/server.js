@@ -33,6 +33,31 @@ const STATIC_LOOKER_SETTINGS = Object.freeze({
   userAttributes: {},
 });
 
+const STATIC_KIOSK_SETTINGS = Object.freeze({
+  kiosks: {
+    kflax: {
+      displayName: "KF LaxTV",
+      timeZone: "Europe/Stockholm",
+      reloadMs: 8 * 60 * 1000,
+      healthCheckMs: 30 * 1000,
+      slots: [
+        {
+          id: "day",
+          label: "Day shift",
+          startsAt: "06:00",
+          dashboardRef: "1385",
+        },
+        {
+          id: "night",
+          label: "Night shift",
+          startsAt: "18:00",
+          dashboardRef: "1305",
+        },
+      ],
+    },
+  },
+});
+
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
@@ -118,8 +143,44 @@ app.get("/d/:dashboardRef([A-Za-z0-9_-]+)", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
+app.get("/kiosk/:kioskRef([A-Za-z0-9_-]+)", (req, res) => {
+  resolveKioskConfig(config, req.params.kioskRef);
+  res.set("Cache-Control", "no-store");
+  res.sendFile(path.join(publicDir, "kiosk.html"));
+});
+
+app.get("/kiosk/:kioskRef([A-Za-z0-9_-]+)/manifest.webmanifest", (req, res) => {
+  const kioskConfig = resolveKioskConfig(config, req.params.kioskRef);
+
+  res.set("Cache-Control", "no-store");
+  res.type("application/manifest+json").status(200).json({
+    name: kioskConfig.displayName,
+    short_name: kioskConfig.displayName,
+    start_url: `/kiosk/${kioskConfig.ref}`,
+    scope: "/kiosk/",
+    display: "fullscreen",
+    background_color: "#0b0f19",
+    theme_color: "#0b0f19",
+    icons: [
+      {
+        src: "/kiosk-icon.svg",
+        sizes: "any",
+        type: "image/svg+xml",
+        purpose: "any maskable",
+      },
+    ],
+  });
+});
+
 app.get("/healthz", (_req, res) => {
   res.status(200).json({ ok: true });
+});
+
+app.get("/api/kiosk-config/:kioskRef([A-Za-z0-9_-]+)", (req, res) => {
+  const kioskConfig = resolveKioskConfig(config, req.params.kioskRef);
+
+  res.set("Cache-Control", "no-store");
+  res.status(200).json(buildPublicKioskConfig(kioskConfig));
 });
 
 app.get(
@@ -308,6 +369,10 @@ function loadConfig() {
   const dashboardAliases = normalizeDashboardAliases(
     STATIC_LOOKER_SETTINGS.dashboardAliases
   );
+  const kiosks = normalizeKioskConfigs(
+    STATIC_KIOSK_SETTINGS.kiosks,
+    dashboardAliases
+  );
   const permissions = mergeCsvConfig(
     STATIC_LOOKER_SETTINGS.permissions,
     process.env.LOOKER_PERMISSIONS,
@@ -346,6 +411,7 @@ function loadConfig() {
     groupIdsByModel: STATIC_LOOKER_SETTINGS.groupIdsByModel,
     defaultDashboardId,
     dashboardAliases,
+    kiosks,
     lookerClientId: process.env.LOOKER_CLIENT_ID,
     lookerClientSecret: process.env.LOOKER_CLIENT_SECRET,
     externalUserId: STATIC_LOOKER_SETTINGS.externalUserId,
@@ -502,6 +568,122 @@ function normalizeDashboardAliases(value) {
   return aliases;
 }
 
+function normalizeKioskConfigs(value, dashboardAliases) {
+  const kiosks = {};
+
+  for (const [rawRef, rawConfig] of Object.entries(value || {})) {
+    const ref = String(rawRef || "").trim().toLowerCase();
+    if (!/^[a-z0-9_-]+$/.test(ref)) {
+      failFast("Static kiosk keys must use letters, numbers, '_' or '-'.");
+    }
+
+    if (!rawConfig || typeof rawConfig !== "object") {
+      failFast(`Static kiosk '${ref}' must be an object.`);
+    }
+
+    const displayName = String(rawConfig.displayName || "").trim();
+    if (!displayName) {
+      failFast(`Static kiosk '${ref}' must define displayName.`);
+    }
+
+    const timeZone = String(rawConfig.timeZone || "").trim();
+    if (!timeZone) {
+      failFast(`Static kiosk '${ref}' must define timeZone.`);
+    }
+
+    const slots = normalizeKioskSlots(
+      ref,
+      rawConfig.slots,
+      dashboardAliases
+    );
+
+    kiosks[ref] = {
+      ref,
+      displayName,
+      timeZone,
+      reloadMs: parsePositiveInt(
+        String(rawConfig.reloadMs || 8 * 60 * 1000),
+        `STATIC_KIOSK_SETTINGS.${ref}.reloadMs`
+      ),
+      healthCheckMs: parsePositiveInt(
+        String(rawConfig.healthCheckMs || 30 * 1000),
+        `STATIC_KIOSK_SETTINGS.${ref}.healthCheckMs`
+      ),
+      slots,
+    };
+  }
+
+  return kiosks;
+}
+
+function normalizeKioskSlots(kioskRef, value, dashboardAliases) {
+  if (!Array.isArray(value) || value.length === 0) {
+    failFast(`Static kiosk '${kioskRef}' must define at least one slot.`);
+  }
+
+  const seenSlotIds = new Set();
+  return value.map((slot, index) => {
+    if (!slot || typeof slot !== "object") {
+      failFast(`Static kiosk '${kioskRef}' slot ${index + 1} must be an object.`);
+    }
+
+    const id = String(slot.id || "").trim().toLowerCase();
+    if (!/^[a-z0-9_-]+$/.test(id)) {
+      failFast(
+        `Static kiosk '${kioskRef}' slot ${index + 1} must define a valid id.`
+      );
+    }
+
+    if (seenSlotIds.has(id)) {
+      failFast(`Static kiosk '${kioskRef}' has duplicate slot id '${id}'.`);
+    }
+    seenSlotIds.add(id);
+
+    const label = String(slot.label || id).trim();
+    const startsAt = normalizeTimeOfDay(
+      slot.startsAt,
+      `STATIC_KIOSK_SETTINGS.${kioskRef}.slots.${id}.startsAt`
+    );
+
+    return {
+      id,
+      label,
+      startsAt,
+      dashboardRef: normalizeDashboardRef(slot.dashboardRef, dashboardAliases),
+    };
+  });
+}
+
+function normalizeTimeOfDay(value, fieldName) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    failFast(`${fieldName} must use HH:mm format.`);
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    failFast(`${fieldName} must be a valid 24-hour time.`);
+  }
+
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function normalizeDashboardRef(value, dashboardAliases) {
+  const ref = String(value || "").trim();
+  if (/^\d+$/.test(ref)) {
+    return ref;
+  }
+
+  const alias = ref.toLowerCase();
+  if (dashboardAliases[alias]) {
+    return alias;
+  }
+
+  failFast("Static kiosk dashboardRef must be numeric or a configured alias.");
+}
+
 function resolveDashboardId(runtimeConfig, dashboardRef) {
   const ref = String(dashboardRef || "").trim();
   if (/^\d+$/.test(ref)) {
@@ -518,6 +700,35 @@ function resolveDashboardId(runtimeConfig, dashboardRef) {
   }
 
   return dashboardId;
+}
+
+function resolveKioskConfig(runtimeConfig, kioskRef) {
+  const ref = String(kioskRef || "").trim().toLowerCase();
+  const kioskConfig = runtimeConfig.kiosks[ref];
+  if (!kioskConfig) {
+    throw new ApiError(
+      404,
+      "UNKNOWN_KIOSK",
+      "Kiosk route not found."
+    );
+  }
+  return kioskConfig;
+}
+
+function buildPublicKioskConfig(kioskConfig) {
+  return {
+    ref: kioskConfig.ref,
+    displayName: kioskConfig.displayName,
+    timeZone: kioskConfig.timeZone,
+    reloadMs: kioskConfig.reloadMs,
+    healthCheckMs: kioskConfig.healthCheckMs,
+    slots: kioskConfig.slots.map((slot) => ({
+      id: slot.id,
+      label: slot.label,
+      startsAt: slot.startsAt,
+      dashboardRef: slot.dashboardRef,
+    })),
+  };
 }
 
 function buildEmbedTargetUrl(runtimeConfig, dashboardId) {

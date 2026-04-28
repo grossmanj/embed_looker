@@ -7,6 +7,7 @@ Production-ready Node.js 20 + Express app that embeds Looker dashboards on Googl
 - `https://<cloud-run-url>/1327` loads Looker dashboard `1327`
 - `https://<cloud-run-url>/123` loads Looker dashboard `123`
 - `https://<cloud-run-url>/d/production-tv` loads Looker dashboard `1200`
+- `https://<cloud-run-url>/kiosk/kflax` loads the KF LaxTV ChromeOS kiosk shell
 - `https://<cloud-run-url>/` loads default dashboard `1327`
 
 The backend only builds embed URLs in this fixed format:
@@ -20,8 +21,22 @@ No Looker credentials are exposed to the browser.
 - `GET /healthz` -> `{"ok": true}`
 - `GET /api/embed-url/:dashboardRef` -> `{"url":"<embed_login_url>","dashboardId":"<id>","clientSessionId":"<id>"}` (`clientSessionId` is auto-generated for manual testing if omitted)
 - `GET /api/embed-tokens/:dashboardRef` -> `{"api_token":"...","navigation_token":"..."}`
+- `GET /api/kiosk-config/:kioskRef` -> non-secret kiosk display configuration
 
 `dashboardRef` can be a numeric dashboard ID or a configured alias such as `production-tv`.
+
+## ChromeOS kiosk route
+
+The current kiosk route is additive and does not change the existing dashboard URLs.
+
+- Route: `/kiosk/kflax`
+- Time zone: `Europe/Stockholm`
+- Day shift: starts `06:00`, dashboard `1385`
+- Night shift: starts `18:00`, dashboard `1305`
+- Debug mode: `/kiosk/kflax?debug=1`
+- Force a slot for testing: `/kiosk/kflax?debug=1&slot=day` or `/kiosk/kflax?debug=1&slot=night`
+
+The kiosk shell reuses the same cookieless Looker embed APIs as the single-dashboard routes. It refreshes the active dashboard periodically, switches dashboards at the configured shift boundary, and keeps separate client session IDs per dashboard.
 
 ## Static settings in code
 
