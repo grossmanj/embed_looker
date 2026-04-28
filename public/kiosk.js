@@ -35,6 +35,7 @@
   let dashboardLoadArmed = false;
   let scrollAnimationFrame = null;
   let scrollDirection = 1;
+  let scrollPosition = 0;
   let scrollPauseUntil = 0;
   let lastScrollFrameAt = 0;
 
@@ -465,6 +466,7 @@
 
   function resetAutoScrollPosition() {
     if (viewport) {
+      scrollPosition = 0;
       viewport.scrollTop = 0;
     }
   }
@@ -491,20 +493,23 @@
         kioskConfig.autoScroll.pixelsPerSecond *
         elapsedSeconds *
         scrollDirection;
-      const nextScrollTop = viewport.scrollTop + delta;
+      const nextScrollTop = scrollPosition + delta;
 
       if (scrollDirection > 0 && nextScrollTop >= maxScroll) {
+        scrollPosition = maxScroll;
         viewport.scrollTop = maxScroll;
         scrollDirection = -1;
         scrollPauseUntil = now + kioskConfig.autoScroll.pauseMs;
         lastScrollFrameAt = 0;
       } else if (scrollDirection < 0 && nextScrollTop <= 0) {
+        scrollPosition = 0;
         viewport.scrollTop = 0;
         scrollDirection = 1;
         scrollPauseUntil = now + kioskConfig.autoScroll.pauseMs;
         lastScrollFrameAt = 0;
       } else {
-        viewport.scrollTop = Math.min(Math.max(nextScrollTop, 0), maxScroll);
+        scrollPosition = Math.min(Math.max(nextScrollTop, 0), maxScroll);
+        viewport.scrollTop = scrollPosition;
         lastScrollFrameAt = timestamp;
       }
     } else {
