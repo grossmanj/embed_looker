@@ -35,6 +35,7 @@ To keep configuration simple, non-sensitive values are static in
 - default embedded models include both `kvalitetsfisk` and `fsgdk`
 - `fsgdk` dashboards automatically add the FSG Sales group (`29`) to the embed session
 - no `frame-ancestors` directive is sent by default because Mango Display's embed website validator can reject otherwise valid CSP allowlists; set `FRAME_ANCESTORS` only for non-Mango deployments that need an explicit iframe allowlist
+- each browser dashboard session gets a unique Looker `external_user_id` derived from the dashboard ID and client session ID, so simultaneous Mango widgets do not terminate one another's Looker sessions
 
 Environment-provided `LOOKER_MODELS` and `LOOKER_PERMISSIONS` extend these defaults instead of replacing them.
 

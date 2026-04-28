@@ -135,7 +135,11 @@ app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) =
       lookerAuth,
       dashboardId
     );
-    const embedAccessConfig = buildEmbedAccessConfig(config, dashboardContext);
+    const embedAccessConfig = buildEmbedAccessConfig(
+      config,
+      dashboardContext,
+      buildEmbedExternalUserId(config, dashboardId, clientSessionId)
+    );
     const embedResult = await getCookielessEmbedUrl(
       embedAccessConfig,
       lookerAuth,
@@ -643,7 +647,7 @@ async function getDashboardContext(runtimeConfig, lookerAuth, dashboardId) {
   );
 }
 
-function buildEmbedAccessConfig(runtimeConfig, dashboardContext) {
+function buildEmbedAccessConfig(runtimeConfig, dashboardContext, externalUserId) {
   const dashboardModels = dashboardContext.models || [];
   const extraGroupIds = [];
 
@@ -656,9 +660,18 @@ function buildEmbedAccessConfig(runtimeConfig, dashboardContext) {
 
   return {
     ...runtimeConfig,
+    externalUserId,
     models: mergeCsvConfig(runtimeConfig.models, dashboardModels.join(","), "LOOKER_MODELS"),
     groupIds: mergeIntegerLists(runtimeConfig.groupIds, extraGroupIds),
   };
+}
+
+function buildEmbedExternalUserId(runtimeConfig, dashboardId, clientSessionId) {
+  return [
+    runtimeConfig.externalUserId,
+    dashboardId,
+    clientSessionId,
+  ].join("-").slice(0, 255);
 }
 
 async function getCookielessEmbedUrl(
