@@ -4,6 +4,7 @@
   const RESUME_GAP_MS = 90 * 1000;
   const RESUME_REFRESH_COOLDOWN_MS = 15 * 1000;
 
+  const viewport = document.querySelector(".viewport");
   const iframe = document.getElementById("dashboard-frame");
   const loadingOverlay = document.getElementById("loading-overlay");
   const loadingText = document.getElementById("loading-text");
@@ -31,6 +32,10 @@
   let lastResumeRefreshAt = 0;
   let loadTimeout = null;
   let healthTimer = null;
+  let scrollAnimationFrame = null;
+  let scrollDirection = 1;
+  let scrollPauseUntil = 0;
+  let lastScrollFrameAt = 0;
 
   updateViewportHeight();
   window.addEventListener("resize", updateViewportHeight);
@@ -47,6 +52,7 @@
     setLoading(false);
     hasLoadedAtLeastOnce = true;
     lastSuccessfulEmbedAt = Date.now();
+    startAutoScroll();
     updateStatus("loaded");
   });
 
@@ -85,6 +91,7 @@
     try {
       kioskConfig = await fetchKioskConfig();
       document.title = `${kioskConfig.displayName} Kiosk`;
+      configureAutoScroll();
       void loadActiveDashboard({
         interactive: true,
         force: true,
@@ -174,6 +181,8 @@
     loadInFlight = true;
     activeSlot = nextSlot;
     activeDashboardRef = nextDashboardRef;
+    stopAutoScroll();
+    resetAutoScrollPosition();
 
     if (!hasLoadedAtLeastOnce) {
       iframe.hidden = true;
@@ -408,8 +417,96 @@
       `state=${state}`,
       `slot=${slot.id}`,
       `dashboard=${slot.dashboardRef}`,
+      `scroll=${isAutoScrollEnabled() ? "on" : "off"}`,
       `lastLoad=${lastLoad}`,
     ].join(" | ");
+  }
+
+  function configureAutoScroll() {
+    if (!isAutoScrollEnabled()) {
+      viewport.classList.remove("kiosk-scroll-enabled");
+      iframe.style.removeProperty("height");
+      return;
+    }
+
+    viewport.classList.add("kiosk-scroll-enabled");
+    iframe.style.height = `${kioskConfig.autoScroll.frameHeightVh}vh`;
+  }
+
+  function startAutoScroll() {
+    if (!isAutoScrollEnabled()) {
+      return;
+    }
+
+    stopAutoScroll();
+    resetAutoScrollPosition();
+    scrollDirection = 1;
+    scrollPauseUntil = Date.now() + kioskConfig.autoScroll.initialPauseMs;
+    lastScrollFrameAt = 0;
+    scrollAnimationFrame = requestAnimationFrame(stepAutoScroll);
+  }
+
+  function stopAutoScroll() {
+    if (scrollAnimationFrame) {
+      cancelAnimationFrame(scrollAnimationFrame);
+      scrollAnimationFrame = null;
+    }
+    lastScrollFrameAt = 0;
+  }
+
+  function resetAutoScrollPosition() {
+    if (viewport) {
+      viewport.scrollTop = 0;
+    }
+  }
+
+  function stepAutoScroll(timestamp) {
+    if (!isAutoScrollEnabled()) {
+      scrollAnimationFrame = null;
+      return;
+    }
+
+    const now = Date.now();
+    const maxScroll = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+
+    if (maxScroll > 2 && now >= scrollPauseUntil) {
+      if (!lastScrollFrameAt) {
+        lastScrollFrameAt = timestamp;
+      }
+
+      const elapsedSeconds = Math.min(
+        Math.max((timestamp - lastScrollFrameAt) / 1000, 0),
+        1
+      );
+      const delta =
+        kioskConfig.autoScroll.pixelsPerSecond *
+        elapsedSeconds *
+        scrollDirection;
+      const nextScrollTop = viewport.scrollTop + delta;
+
+      if (nextScrollTop >= maxScroll) {
+        viewport.scrollTop = maxScroll;
+        scrollDirection = -1;
+        scrollPauseUntil = now + kioskConfig.autoScroll.pauseMs;
+        lastScrollFrameAt = 0;
+      } else if (nextScrollTop <= 0) {
+        viewport.scrollTop = 0;
+        scrollDirection = 1;
+        scrollPauseUntil = now + kioskConfig.autoScroll.pauseMs;
+        lastScrollFrameAt = 0;
+      } else {
+        viewport.scrollTop = nextScrollTop;
+        lastScrollFrameAt = timestamp;
+      }
+    } else {
+      lastScrollFrameAt = 0;
+    }
+
+    scrollAnimationFrame = requestAnimationFrame(stepAutoScroll);
+  }
+
+  function isAutoScrollEnabled() {
+    return Boolean(kioskConfig?.autoScroll?.enabled && viewport);
   }
 
   function getKioskRefFromPath() {
@@ -486,6 +583,7 @@
 
   window.addEventListener("beforeunload", () => {
     clearLoadTimeout();
+    stopAutoScroll();
     if (healthTimer) {
       clearInterval(healthTimer);
     }

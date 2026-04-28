@@ -8,6 +8,7 @@ Production-ready Node.js 20 + Express app that embeds Looker dashboards on Googl
 - `https://<cloud-run-url>/123` loads Looker dashboard `123`
 - `https://<cloud-run-url>/d/production-tv` loads Looker dashboard `1200`
 - `https://<cloud-run-url>/kiosk/kflax` loads the KF LaxTV ChromeOS kiosk shell
+- `https://<cloud-run-url>/kiosk/fsg-sales/` loads the FSG Sales ChromeOS kiosk shell
 - `https://<cloud-run-url>/` loads default dashboard `1327`
 
 The backend only builds embed URLs in this fixed format:
@@ -29,14 +30,19 @@ No Looker credentials are exposed to the browser.
 
 The current kiosk route is additive and does not change the existing dashboard URLs.
 
-- Route: `/kiosk/kflax`
+- KF LaxTV route: `/kiosk/kflax`
 - Time zone: `Europe/Stockholm`
 - Day shift: starts `06:00`, dashboard `1200`
 - Night shift: starts `18:00`, dashboard `1305`
 - Debug mode: `/kiosk/kflax?debug=1`
 - Force a slot for testing: `/kiosk/kflax?debug=1&slot=day` or `/kiosk/kflax?debug=1&slot=night`
 
-The kiosk shell reuses the same cookieless Looker embed APIs as the single-dashboard routes. It refreshes the active dashboard periodically, switches dashboards at the configured shift boundary, and keeps separate client session IDs per dashboard.
+- FSG Sales route: `/kiosk/fsg-sales/`
+- FSG Sales dashboard: `1218`
+- FSG Sales auto-scroll: enabled, `240vh` iframe height, `18px/s`, 12-second pauses at top/bottom
+- FSG Sales debug mode: `/kiosk/fsg-sales/?debug=1`
+
+The kiosk shell reuses the same cookieless Looker embed APIs as the single-dashboard routes. It refreshes the active dashboard periodically, switches dashboards at configured shift boundaries, keeps separate client session IDs per dashboard, and can slowly scroll tall dashboards by rendering a taller iframe and moving the parent viewport.
 
 ## Static settings in code
 

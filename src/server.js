@@ -55,6 +55,27 @@ const STATIC_KIOSK_SETTINGS = Object.freeze({
         },
       ],
     },
+    "fsg-sales": {
+      displayName: "FSG Sales",
+      timeZone: "Europe/Stockholm",
+      reloadMs: 8 * 60 * 1000,
+      healthCheckMs: 30 * 1000,
+      autoScroll: {
+        enabled: true,
+        frameHeightVh: 240,
+        pixelsPerSecond: 18,
+        pauseMs: 12 * 1000,
+        initialPauseMs: 15 * 1000,
+      },
+      slots: [
+        {
+          id: "main",
+          label: "FSG Sales",
+          startsAt: "00:00",
+          dashboardRef: "1218",
+        },
+      ],
+    },
   },
 });
 
@@ -144,9 +165,10 @@ app.get("/d/:dashboardRef([A-Za-z0-9_-]+)", (_req, res) => {
 });
 
 app.get("/kiosk/:kioskRef([A-Za-z0-9_-]+)", (req, res) => {
-  resolveKioskConfig(config, req.params.kioskRef);
+  const kioskConfig = resolveKioskConfig(config, req.params.kioskRef);
+
   res.set("Cache-Control", "no-store");
-  res.sendFile(path.join(publicDir, "kiosk.html"));
+  res.type("html").send(renderKioskHtml(kioskConfig));
 });
 
 app.get("/kiosk/:kioskRef([A-Za-z0-9_-]+)/manifest.webmanifest", (req, res) => {
@@ -156,8 +178,8 @@ app.get("/kiosk/:kioskRef([A-Za-z0-9_-]+)/manifest.webmanifest", (req, res) => {
   res.type("application/manifest+json").status(200).json({
     name: kioskConfig.displayName,
     short_name: kioskConfig.displayName,
-    start_url: `/kiosk/${kioskConfig.ref}`,
-    scope: "/kiosk/",
+    start_url: `/kiosk/${kioskConfig.ref}/`,
+    scope: `/kiosk/${kioskConfig.ref}/`,
     display: "fullscreen",
     background_color: "#0b0f19",
     theme_color: "#0b0f19",
@@ -609,6 +631,7 @@ function normalizeKioskConfigs(value, dashboardAliases) {
         String(rawConfig.healthCheckMs || 30 * 1000),
         `STATIC_KIOSK_SETTINGS.${ref}.healthCheckMs`
       ),
+      autoScroll: normalizeKioskAutoScroll(ref, rawConfig.autoScroll),
       slots,
     };
   }
@@ -684,6 +707,40 @@ function normalizeDashboardRef(value, dashboardAliases) {
   failFast("Static kiosk dashboardRef must be numeric or a configured alias.");
 }
 
+function normalizeKioskAutoScroll(kioskRef, value) {
+  const disabled = {
+    enabled: false,
+    frameHeightVh: 100,
+    pixelsPerSecond: 0,
+    pauseMs: 0,
+    initialPauseMs: 0,
+  };
+
+  if (!value || typeof value !== "object" || value.enabled !== true) {
+    return disabled;
+  }
+
+  return {
+    enabled: true,
+    frameHeightVh: parsePositiveInt(
+      String(value.frameHeightVh || 220),
+      `STATIC_KIOSK_SETTINGS.${kioskRef}.autoScroll.frameHeightVh`
+    ),
+    pixelsPerSecond: parsePositiveInt(
+      String(value.pixelsPerSecond || 18),
+      `STATIC_KIOSK_SETTINGS.${kioskRef}.autoScroll.pixelsPerSecond`
+    ),
+    pauseMs: parsePositiveInt(
+      String(value.pauseMs || 12 * 1000),
+      `STATIC_KIOSK_SETTINGS.${kioskRef}.autoScroll.pauseMs`
+    ),
+    initialPauseMs: parsePositiveInt(
+      String(value.initialPauseMs || 15 * 1000),
+      `STATIC_KIOSK_SETTINGS.${kioskRef}.autoScroll.initialPauseMs`
+    ),
+  };
+}
+
 function resolveDashboardId(runtimeConfig, dashboardRef) {
   const ref = String(dashboardRef || "").trim();
   if (/^\d+$/.test(ref)) {
@@ -722,6 +779,7 @@ function buildPublicKioskConfig(kioskConfig) {
     timeZone: kioskConfig.timeZone,
     reloadMs: kioskConfig.reloadMs,
     healthCheckMs: kioskConfig.healthCheckMs,
+    autoScroll: kioskConfig.autoScroll,
     slots: kioskConfig.slots.map((slot) => ({
       id: slot.id,
       label: slot.label,
@@ -729,6 +787,74 @@ function buildPublicKioskConfig(kioskConfig) {
       dashboardRef: slot.dashboardRef,
     })),
   };
+}
+
+function renderKioskHtml(kioskConfig) {
+  const title = escapeHtml(`${kioskConfig.displayName} Kiosk`);
+  const manifestHref = `/kiosk/${encodeURIComponent(
+    kioskConfig.ref
+  )}/manifest.webmanifest`;
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b0f19" />
+    <title>${title}</title>
+    <link rel="manifest" href="${manifestHref}" />
+    <link rel="icon" href="/kiosk-icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/kiosk.js" defer></script>
+  </head>
+  <body>
+    <main class="viewport">
+      <iframe
+        id="dashboard-frame"
+        title="Looker Dashboard"
+        referrerpolicy="strict-origin-when-cross-origin"
+        hidden
+      ></iframe>
+
+      <div id="loading-overlay" class="overlay" role="status" aria-live="polite">
+        <p id="loading-text">Loading secure dashboard URL...</p>
+      </div>
+
+      <div id="error-overlay" class="overlay overlay-error" role="alert" hidden>
+        <div class="error-card">
+          <p id="error-text">Dashboard could not be loaded.</p>
+          <button id="retry-btn" type="button">Retry</button>
+        </div>
+      </div>
+
+      <aside id="kiosk-status" class="kiosk-status" hidden>
+        <p id="kiosk-status-text"></p>
+      </aside>
+    </main>
+  </body>
+</html>`;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&#39;";
+      default:
+        return char;
+    }
+  });
 }
 
 function buildEmbedTargetUrl(runtimeConfig, dashboardId) {
