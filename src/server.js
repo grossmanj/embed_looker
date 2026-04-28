@@ -11,14 +11,7 @@ const STATIC_LOOKER_SETTINGS = Object.freeze({
   lookerBaseUrl: "https://nordward.cloud.looker.com",
   embedPathPrefix: "/embed/dashboards",
   defaultDashboardId: "1327",
-  frameAncestors: [
-    "'self'",
-    "https://app.mangodisplay.com",
-    "https://portal.mangodisplay.com",
-    "https://*.mangodisplay.com",
-    "https://app.mangosigns.com",
-    "https://*.mangosigns.com",
-  ],
+  frameAncestors: [],
   externalUserId: "public-dashboard-viewer",
   firstName: "Public",
   lastName: "Viewer",
@@ -69,7 +62,9 @@ app.use(
         frameSrc: ["'self'", lookerOrigin],
         objectSrc: ["'none'"],
         baseUri: ["'self'"],
-        frameAncestors: config.frameAncestors,
+        frameAncestors: config.frameAncestors.length
+          ? config.frameAncestors
+          : null,
       },
     },
   })

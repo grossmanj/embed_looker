@@ -34,7 +34,7 @@ To keep configuration simple, non-sensitive values are static in
 - default embedded permissions include folder browsing and dashboard access
 - default embedded models include both `kvalitetsfisk` and `fsgdk`
 - `fsgdk` dashboards automatically add the FSG Sales group (`29`) to the embed session
-- frame ancestors allowlist includes Mango domains by default (`https://app.mangodisplay.com`, `https://portal.mangodisplay.com`, `https://*.mangodisplay.com`, `https://app.mangosigns.com`, `https://*.mangosigns.com`)
+- no `frame-ancestors` directive is sent by default because Mango Display's embed website validator can reject otherwise valid CSP allowlists; set `FRAME_ANCESTORS` only for non-Mango deployments that need an explicit iframe allowlist
 
 Environment-provided `LOOKER_MODELS` and `LOOKER_PERMISSIONS` extend these defaults instead of replacing them.
 
@@ -54,7 +54,7 @@ Optional:
 - `LOOKER_PERMISSIONS` (comma-separated extra permissions to add)
 - `LOOKER_MODELS` (comma-separated extra Looker models to add)
 - `LOOKER_EMBED_PATH_PREFIX` (default: `/embed/dashboards`)
-- `FRAME_ANCESTORS` (comma-separated CSP `frame-ancestors`; defaults include Mango Display + `'self'`)
+- `FRAME_ANCESTORS` (comma-separated CSP `frame-ancestors`; omitted by default for Mango Display compatibility)
 - `LOOKER_GROUP_IDS` (comma-separated integer IDs)
 - `LOOKER_USER_ATTRIBUTES_JSON` (JSON object string)
 
@@ -126,7 +126,7 @@ If Cloud Run logs show `LOOKER_EMBED_FAILED`, the most common cause is a model/p
 - Use `.env` only for local development.
 - Add your public Cloud Run domain to the Looker embed allowlist if required by your Looker instance.
 - This app uses Looker cookieless embed flow to reduce dependence on third-party cookies in locked-down kiosk/signage environments.
-- If Mango rejects the page as non-embeddable, verify the Mango embed host is covered by `FRAME_ANCESTORS`; some Mango environments use `app.mangosigns.com` rather than `portal.mangodisplay.com`.
+- If Mango rejects the page as non-embeddable, verify the response does not include `X-Frame-Options` or `frame-ancestors`; Mango's validator can reject otherwise valid allowlists.
 
 ## How to use my rotated Looker service account credentials
 
