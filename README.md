@@ -31,7 +31,7 @@ The current kiosk route is additive and does not change the existing dashboard U
 
 - Route: `/kiosk/kflax`
 - Time zone: `Europe/Stockholm`
-- Day shift: starts `06:00`, dashboard `1385`
+- Day shift: starts `06:00`, dashboard `1200`
 - Night shift: starts `18:00`, dashboard `1305`
 - Debug mode: `/kiosk/kflax?debug=1`
 - Force a slot for testing: `/kiosk/kflax?debug=1&slot=day` or `/kiosk/kflax?debug=1&slot=night`

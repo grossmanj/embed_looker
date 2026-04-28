@@ -45,7 +45,7 @@ const STATIC_KIOSK_SETTINGS = Object.freeze({
           id: "day",
           label: "Day shift",
           startsAt: "06:00",
-          dashboardRef: "1385",
+          dashboardRef: "1200",
         },
         {
           id: "night",
