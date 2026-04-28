@@ -1,5 +1,5 @@
 (() => {
-  const DEFAULT_DASHBOARD_ID = "1327";
+  const DEFAULT_DASHBOARD_REF = "1327";
   const PROACTIVE_REFRESH_MS = 8 * 60 * 1000;
   const WATCHDOG_INTERVAL_MS = 30 * 1000;
   const RESUME_GAP_MS = 90 * 1000;
@@ -12,7 +12,7 @@
   const errorText = document.getElementById("error-text");
   const retryButton = document.getElementById("retry-btn");
 
-  const dashboardId = getDashboardIdFromPath();
+  const dashboardRef = getDashboardRefFromPath();
   const clientSessionId = createClientSessionId();
 
   let loadInFlight = false;
@@ -227,9 +227,16 @@
     errorText.textContent = "";
   }
 
-  function getDashboardIdFromPath() {
-    const match = window.location.pathname.match(/^\/(\d+)\/?$/);
-    return match ? match[1] : DEFAULT_DASHBOARD_ID;
+  function getDashboardRefFromPath() {
+    const numericMatch = window.location.pathname.match(/^\/(\d+)\/?$/);
+    if (numericMatch) {
+      return numericMatch[1];
+    }
+
+    const aliasMatch = window.location.pathname.match(
+      /^\/d\/([A-Za-z0-9_-]+)\/?$/
+    );
+    return aliasMatch ? aliasMatch[1] : DEFAULT_DASHBOARD_REF;
   }
 
   function updateViewportHeight() {
@@ -249,7 +256,7 @@
 
   function getApiUrl(basePath) {
     const safeBase = String(basePath || "").replace(/\/+$/, "");
-    return `${safeBase}/${dashboardId}?clientSessionId=${encodeURIComponent(
+    return `${safeBase}/${dashboardRef}?clientSessionId=${encodeURIComponent(
       clientSessionId
     )}`;
   }

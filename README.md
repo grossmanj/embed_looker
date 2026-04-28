@@ -6,6 +6,7 @@ Production-ready Node.js 20 + Express app that embeds Looker dashboards on Googl
 
 - `https://<cloud-run-url>/1327` loads Looker dashboard `1327`
 - `https://<cloud-run-url>/123` loads Looker dashboard `123`
+- `https://<cloud-run-url>/d/production-tv` loads Looker dashboard `1200`
 - `https://<cloud-run-url>/` loads default dashboard `1327`
 
 The backend only builds embed URLs in this fixed format:
@@ -17,10 +18,10 @@ No Looker credentials are exposed to the browser.
 ## API endpoints
 
 - `GET /healthz` -> `{"ok": true}`
-- `GET /api/embed-url/:dashboardId` -> `{"url":"<embed_login_url>","dashboardId":"<id>","clientSessionId":"<id>"}` (`clientSessionId` is auto-generated for manual testing if omitted)
-- `GET /api/embed-tokens/:dashboardId` -> `{"api_token":"...","navigation_token":"..."}`
+- `GET /api/embed-url/:dashboardRef` -> `{"url":"<embed_login_url>","dashboardId":"<id>","clientSessionId":"<id>"}` (`clientSessionId` is auto-generated for manual testing if omitted)
+- `GET /api/embed-tokens/:dashboardRef` -> `{"api_token":"...","navigation_token":"..."}`
 
-`dashboardId` must be numeric.
+`dashboardRef` can be a numeric dashboard ID or a configured alias such as `production-tv`.
 
 ## Static settings in code
 
@@ -30,6 +31,7 @@ To keep configuration simple, non-sensitive values are static in
 - Looker base URL (`https://nordward.cloud.looker.com`)
 - embed path prefix (`/embed/dashboards`)
 - default dashboard ID (`1327`)
+- dashboard aliases, including `production-tv` -> dashboard `1200`
 - embed user profile defaults (external user ID, first/last name)
 - default embedded permissions include folder browsing and dashboard access
 - default embedded models include both `kvalitetsfisk` and `fsgdk`

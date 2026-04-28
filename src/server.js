@@ -11,6 +11,9 @@ const STATIC_LOOKER_SETTINGS = Object.freeze({
   lookerBaseUrl: "https://nordward.cloud.looker.com",
   embedPathPrefix: "/embed/dashboards",
   defaultDashboardId: "1327",
+  dashboardAliases: {
+    "production-tv": "1200",
+  },
   frameAncestors: [],
   externalUserId: "public-dashboard-viewer",
   firstName: "Public",
@@ -111,87 +114,95 @@ app.get("/:dashboardId(\\d+)", (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
+app.get("/d/:dashboardRef([A-Za-z0-9_-]+)", (_req, res) => {
+  res.sendFile(path.join(publicDir, "index.html"));
+});
+
 app.get("/healthz", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
-app.get("/api/embed-url/:dashboardId(\\d+)", embedUrlLimiter, async (req, res) => {
-  try {
-    const dashboardId = req.params.dashboardId;
-    const targetUrl = buildEmbedTargetUrl(config, dashboardId);
-    const embedDomain = buildEmbedDomain(req);
-    const userAgent = req.get("user-agent") || "embed-looker-cloud-run";
-    const clientSessionId = resolveClientSessionId(req, {
-      allowGenerated: true,
-    });
-    const clientSessionKey = buildCookielessClientSessionKey(
-      dashboardId,
-      clientSessionId
-    );
-    const priorSession = getCookielessSession(clientSessionKey);
-    const lookerAuth = await getLookerAccessToken(config);
-    const dashboardContext = await getDashboardContext(
-      config,
-      lookerAuth,
-      dashboardId
-    );
-    const embedAccessConfig = buildEmbedAccessConfig(
-      config,
-      dashboardContext,
-      buildEmbedExternalUserId(config, dashboardId, clientSessionId)
-    );
-    const embedResult = await getCookielessEmbedUrl(
-      embedAccessConfig,
-      lookerAuth,
-      targetUrl,
-      embedDomain,
-      userAgent,
-      priorSession?.sessionReferenceToken
-    );
+app.get(
+  "/api/embed-url/:dashboardRef([A-Za-z0-9_-]+)",
+  embedUrlLimiter,
+  async (req, res) => {
+    try {
+      const dashboardId = resolveDashboardId(config, req.params.dashboardRef);
+      const targetUrl = buildEmbedTargetUrl(config, dashboardId);
+      const embedDomain = buildEmbedDomain(req);
+      const userAgent = req.get("user-agent") || "embed-looker-cloud-run";
+      const clientSessionId = resolveClientSessionId(req, {
+        allowGenerated: true,
+      });
+      const clientSessionKey = buildCookielessClientSessionKey(
+        dashboardId,
+        clientSessionId
+      );
+      const priorSession = getCookielessSession(clientSessionKey);
+      const lookerAuth = await getLookerAccessToken(config);
+      const dashboardContext = await getDashboardContext(
+        config,
+        lookerAuth,
+        dashboardId
+      );
+      const embedAccessConfig = buildEmbedAccessConfig(
+        config,
+        dashboardContext,
+        buildEmbedExternalUserId(config, dashboardId, clientSessionId)
+      );
+      const embedResult = await getCookielessEmbedUrl(
+        embedAccessConfig,
+        lookerAuth,
+        targetUrl,
+        embedDomain,
+        userAgent,
+        priorSession?.sessionReferenceToken
+      );
 
-    setCookielessSession(clientSessionKey, {
-      dashboardId,
-      sessionReferenceToken: embedResult.sessionReferenceToken,
-      apiToken: embedResult.apiToken,
-      navigationToken: embedResult.navigationToken,
-      apiTokenTtl: embedResult.apiTokenTtl,
-      navigationTokenTtl: embedResult.navigationTokenTtl,
-      sessionReferenceTokenTtl: embedResult.sessionReferenceTokenTtl,
-      expiresAt: Date.now() + COOKILESS_SESSION_TTL_MS,
-      updatedAt: Date.now(),
-    });
+      setCookielessSession(clientSessionKey, {
+        dashboardId,
+        sessionReferenceToken: embedResult.sessionReferenceToken,
+        apiToken: embedResult.apiToken,
+        navigationToken: embedResult.navigationToken,
+        apiTokenTtl: embedResult.apiTokenTtl,
+        navigationTokenTtl: embedResult.navigationTokenTtl,
+        sessionReferenceTokenTtl: embedResult.sessionReferenceTokenTtl,
+        expiresAt: Date.now() + COOKILESS_SESSION_TTL_MS,
+        updatedAt: Date.now(),
+      });
 
-    res.set("Cache-Control", "no-store");
-    res.status(200).json({
-      url: embedResult.url,
-      dashboardId,
-      clientSessionId,
-    });
-  } catch (error) {
-    const publicError = toPublicError(error);
+      res.set("Cache-Control", "no-store");
+      res.status(200).json({
+        url: embedResult.url,
+        dashboardId,
+        clientSessionId,
+      });
+    } catch (error) {
+      const publicError = toPublicError(error);
 
-    console.error("Embed URL generation failed", {
-      code: publicError.code,
-      statusCode: publicError.statusCode,
-      cause: error.message,
-      details: error.details,
-    });
-
-    res.status(publicError.statusCode).json({
-      error: {
+      console.error("Embed URL generation failed", {
         code: publicError.code,
-        message: publicError.message,
-      },
-    });
+        statusCode: publicError.statusCode,
+        cause: error.message,
+        details: error.details,
+      });
+
+      res.status(publicError.statusCode).json({
+        error: {
+          code: publicError.code,
+          message: publicError.message,
+        },
+      });
+    }
   }
-});
+);
 
 app.get(
-  "/api/embed-tokens/:dashboardId(\\d+)",
+  "/api/embed-tokens/:dashboardRef([A-Za-z0-9_-]+)",
   embedTokensLimiter,
   async (req, res) => {
     try {
-      const dashboardId = req.params.dashboardId;
+      const dashboardId = resolveDashboardId(config, req.params.dashboardRef);
       const clientSessionId = resolveClientSessionId(req);
       const clientSessionKey = buildCookielessClientSessionKey(
         dashboardId,
@@ -294,6 +305,9 @@ function loadConfig() {
   const defaultDashboardId = normalizeDashboardId(
     STATIC_LOOKER_SETTINGS.defaultDashboardId
   );
+  const dashboardAliases = normalizeDashboardAliases(
+    STATIC_LOOKER_SETTINGS.dashboardAliases
+  );
   const permissions = mergeCsvConfig(
     STATIC_LOOKER_SETTINGS.permissions,
     process.env.LOOKER_PERMISSIONS,
@@ -331,6 +345,7 @@ function loadConfig() {
     frameAncestors,
     groupIdsByModel: STATIC_LOOKER_SETTINGS.groupIdsByModel,
     defaultDashboardId,
+    dashboardAliases,
     lookerClientId: process.env.LOOKER_CLIENT_ID,
     lookerClientSecret: process.env.LOOKER_CLIENT_SECRET,
     externalUserId: STATIC_LOOKER_SETTINGS.externalUserId,
@@ -469,6 +484,40 @@ function normalizeDashboardId(value) {
     failFast("Static defaultDashboardId must be numeric.");
   }
   return id;
+}
+
+function normalizeDashboardAliases(value) {
+  const aliases = {};
+
+  for (const [rawAlias, rawDashboardId] of Object.entries(value || {})) {
+    const alias = String(rawAlias || "").trim().toLowerCase();
+    if (!/^[a-z0-9_-]+$/.test(alias)) {
+      failFast(
+        "Static dashboardAliases keys must use letters, numbers, '_' or '-'."
+      );
+    }
+    aliases[alias] = normalizeDashboardId(rawDashboardId);
+  }
+
+  return aliases;
+}
+
+function resolveDashboardId(runtimeConfig, dashboardRef) {
+  const ref = String(dashboardRef || "").trim();
+  if (/^\d+$/.test(ref)) {
+    return ref;
+  }
+
+  const dashboardId = runtimeConfig.dashboardAliases[ref.toLowerCase()];
+  if (!dashboardId) {
+    throw new ApiError(
+      404,
+      "UNKNOWN_DASHBOARD",
+      "Dashboard route not found."
+    );
+  }
+
+  return dashboardId;
 }
 
 function buildEmbedTargetUrl(runtimeConfig, dashboardId) {
